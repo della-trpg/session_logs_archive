@@ -144,12 +144,54 @@
       else if (r > box.scrollLeft + box.clientWidth) box.scrollLeft = r - box.clientWidth + 8;
     });
   }
+  // 지금 읽는 장면: 화면 위쪽(도구줄 아래 조금)을 이미 지난 장면 제목 중 마지막 것. 같은 회차 안에서만.
+  let sceneTick = 0;
+  function spyScene() {
+    if (sceneTick) return;
+    sceneTick = requestAnimationFrame(() => {
+      sceneTick = 0;
+      if ($('bookPage').hidden) return;
+      const tb = $('toolbar').getBoundingClientRect().bottom;
+      const line = tb + Math.min(160, (window.innerHeight - tb) * 0.25);
+      // 회차: 기준선을 지난 마지막 회차 (전체 이어 보기에서만)
+      if (S.view === 'all') {
+        let no = null;
+        for (const sec of $('log').querySelectorAll('.sess')) {
+          if (sec.getBoundingClientRect().top <= line || no == null) no = Number(sec.dataset.no); else break;
+        }
+        if (no != null && no !== S.active) setActive(no);
+      }
+      let cur = null;
+      for (const n of $('log').querySelectorAll('.g-scene, .er.k-scene')) {
+        if (n.getBoundingClientRect().top <= line) cur = n.id; else break;
+      }
+      // 장면 제목 뒤에 다음 회차가 시작됐으면 그 장면은 끝난 것
+      const e = cur && store.byId.get(cur);
+      const sessNow = S.view === 'all' ? S.active : S.session;
+      if (e && sessNow != null && e.session !== sessNow) cur = null;
+      setScene(cur);
+    });
+  }
+  function setScene(id) {
+    if (S.scene === id) return;
+    S.scene = id;
+    document.querySelectorAll('[data-scene]').forEach((a) => a.classList.toggle('is-match', a.dataset.scene === id));
+    // 목차가 길어 스크롤되면 지금 장면이 보이게
+    const a = id && $('toc').querySelector(`[data-scene="${id}"]`);
+    const toc = $('toc');
+    if (a && toc.scrollHeight > toc.clientHeight) {
+      const r = a.getBoundingClientRect(); const t = toc.getBoundingClientRect();
+      if (r.top < t.top || r.bottom > t.bottom) toc.scrollTop += r.top - t.top - toc.clientHeight / 2;
+    }
+  }
+
   function setActive(no) {
     if (S.active === no) return;
     S.active = no;
     $('sessionTabs').querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(Number(t.dataset.no) === no)));
     $('toc').querySelectorAll('[data-sess]').forEach((a) => a.classList.toggle('is-match', Number(a.dataset.sess) === no));
     revealActiveTab();
+    spyScene();
   }
 
   function renderFilters(counts) {
@@ -199,7 +241,7 @@
     S[key] = v; prefs.set(key, v);
     if (key === 'view' && v === 'session' && S.active != null) S.session = S.active;
     renderOpts();
-    if (key === 'view') { render(); if (a) { const n = document.getElementById(a.id); if (n) n.scrollIntoView({ block: 'start' }); } }
+    if (key === 'view') render(a || false);
     else if (key === 'showTime') render(true);
     else if (a) restorePlace(a);
   }
@@ -439,9 +481,9 @@
     return c;
   }
 
-  let spy = null;
+  // keepPlace: true = 지금 화면 맨 위 줄을 기준으로 / { id, off } = 미리 잡아 둔 기준 줄
   function render(keepPlace) {
-    const anchor = keepPlace ? topVisibleEntry() : null;
+    const anchor = keepPlace && typeof keepPlace === 'object' ? keepPlace : keepPlace ? topVisibleEntry() : null;
     S.marks = []; S.mi = -1;
     const editing = SL.editor && SL.editor.active;
     const sessions = S.view === 'all' ? (editing ? SL.editor.sessionList() : sessionList()) : [sessionOf(S.session)];
@@ -457,6 +499,7 @@
     updateSearchCount(all);
     watchSessions();
     if (anchor) restorePlace(anchor);
+    spyScene();
   }
 
   function renderLog(sessions, all) {
@@ -497,25 +540,59 @@
       n = near && document.getElementById(near.id);
       if (!n) return;
     }
-    window.scrollBy(0, n.getBoundingClientRect().top - a.off);
+    settle(n, a.off);
+    holdAnchor({ id: n.id, off: a.off });
   }
 
+  // 기준 줄을 off 높이로. 스크롤하면 화면 밖 줄 높이가 다시 바뀔 수 있어서 맞을 때까지 몇 번 반복
+  function settle(n, off) {
+    for (let i = 0; i < 8; i++) {
+      const d = n.getBoundingClientRect().top - off;
+      if (Math.abs(d) < 1) return;
+      window.scrollBy(0, d);
+    }
+  }
+
+  // 다시 그린 직후 잠깐 동안 기준 줄을 같은 높이에 붙잡아 둔다.
+  // (화면 밖 줄은 다음 프레임에 어림 높이로 바뀌어 위쪽 길이가 달라지므로, 바뀌는 즉시 그리기 전에 바로잡음)
+  // 사람이 직접 스크롤(휠·터치·키·스크롤바)하면 바로 놓아 줌.
+  let hold = null;
+  function holdAnchor(a) {
+    releaseAnchor();
+    const fix = () => {
+      const n = document.getElementById(a.id);
+      if (n && n.isConnected) settle(n, a.off);
+    };
+    const ro = new ResizeObserver(fix);
+    ro.observe($('log'));
+    let alive = true;
+    const tick = () => { if (!alive) return; fix(); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    const stop = () => releaseAnchor();
+    const keys = (ev) => { if (/^(Arrow|Page|Home|End|\s)/.test(ev.key) || ev.key === ' ') stop(); };
+    window.addEventListener('wheel', stop, { passive: true });
+    window.addEventListener('touchstart', stop, { passive: true });
+    window.addEventListener('keydown', keys);
+    window.addEventListener('pointerdown', stop);
+    const timer = setTimeout(stop, 700);
+    hold = () => {
+      alive = false; ro.disconnect(); clearTimeout(timer);
+      window.removeEventListener('wheel', stop); window.removeEventListener('touchstart', stop);
+      window.removeEventListener('keydown', keys); window.removeEventListener('pointerdown', stop);
+    };
+  }
+  function releaseAnchor() { if (hold) { const h = hold; hold = null; h(); } }
+
+  // 지금 회차는 spyScene이 장면과 같은 기준선으로 정함 (스크롤할 때마다)
   function watchSessions() {
-    if (spy) spy.disconnect();
-    if (S.view !== 'all' || !('IntersectionObserver' in window)) return;
-    const heads = Array.from(document.querySelectorAll('.sess'));
-    const seen = new Map();
-    spy = new IntersectionObserver((ents) => {
-      ents.forEach((en) => seen.set(Number(en.target.dataset.no), en.isIntersecting));
-      const firstOn = heads.find((h) => seen.get(Number(h.dataset.no)));
-      if (firstOn) setActive(Number(firstOn.dataset.no));
-    }, { rootMargin: '-140px 0px -55% 0px' });
-    heads.forEach((h) => spy.observe(h));
-    if (S.active == null && heads[0]) setActive(Number(heads[0].dataset.no));
+    if (S.view !== 'all') return;
+    const first = $('log').querySelector('.sess');
+    if (S.active == null && first) setActive(Number(first.dataset.no));
   }
 
   function sceneLink(s) {
-    const a = el('a', null, s.text); a.href = '#' + s.id;
+    const a = el('a', null, s.text); a.href = '#' + s.id; a.dataset.scene = s.id;
+    if (s.id === S.scene) a.classList.add('is-match');
     a.addEventListener('click', (ev) => { ev.preventDefault(); if (S.view === 'session' && s.session !== S.session) { S.session = s.session; render(); } scrollToId(s.id); });
     return a;
   }
@@ -705,6 +782,10 @@
       $('toolToggle').setAttribute('aria-expanded', String(open));
     });
     window.addEventListener('hashchange', route);
+    window.addEventListener('scroll', spyScene, { passive: true });
+    // 목차가 도구줄 밑에 붙도록 도구줄 높이를 CSS에 알려 줌 (편집 모드에선 더 높아짐)
+    new ResizeObserver(() => document.documentElement.style.setProperty('--toolbar-h', $('toolbar').offsetHeight + 'px')).observe($('toolbar'));
+    window.addEventListener('resize', spyScene);
     store.on((ev) => {
       if (ev.saved === false) toast(store.mode === 'demo' ? '이 브라우저에 저장하지 못했어요. 저장 공간이 부족할 수 있어요.' : `저장하지 못했어요: ${store.saveError ? store.saveError.message : ''}`);
       if (ev.saved != null || ev.saving) { if (SL.editor) SL.editor.updateBar(); return; }
@@ -747,6 +828,6 @@
 
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
-    diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
+    diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
     openBook, ctx: () => ctx };
 })();

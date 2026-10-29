@@ -140,7 +140,7 @@ button, input { font: inherit; color: inherit; }
 .log-main { min-width: 0; max-width: var(--col); width: 100%; }
 
 .toc { font-size: 0.86rem; }
-@media (min-width: 1100px) { .toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 7.5rem); align-self: start; max-height: calc(100vh - 9rem); overflow: auto; } }
+@media (min-width: 1100px) { .toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--toolbar-h, 6.5rem) + 1rem); align-self: start; max-height: calc(100vh - var(--toolbar-h, 6.5rem) - 2rem); overflow: auto; } }
 @media (max-width: 1099px) { .toc { display: none; } }
 .toc h2 { font-size: 0.72rem; letter-spacing: 0.12em; color: var(--muted); margin: 0 0 0.5rem; font-weight: 600; }
 .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.1rem; }
@@ -279,6 +279,8 @@ body.size-l { --fs: 17px; }
 .session-head { scroll-margin-top: 7.5rem; }
 .toc-sub { padding-left: 0.75rem !important; margin: 0.1rem 0 0.3rem !important; }
 .toc-sub a { font-size: 0.82rem; color: var(--muted); }
+.toc-sub a.is-match { color: var(--ink); font-weight: 600; background: var(--tint); }
+.scene-jump a.is-match { font-weight: 600; color: var(--ink); }
 .toc-sess { color: var(--muted); }
 
 /* 인물 색 시트 */

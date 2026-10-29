@@ -47,6 +47,7 @@
 
   // ── 켜기 · 끄기 ─────────────────────────
   E.toggle = function () {
+    const anchor = A.topVisibleEntry();   // 화면 모양을 바꾸기 전에 기준 줄부터
     E.active = !E.active;
     document.body.classList.toggle('editing', E.active);
     $('optEdit').setAttribute('aria-pressed', String(E.active));
@@ -55,7 +56,7 @@
     if (!E.active) { E.sel.clear(); E.moving = false; E.trash = false; closeMenu(); }
     updateBulk();
     E.updateBar();
-    A.render(true);
+    A.render(anchor || true);
   };
 
   E.updateBar = function () {
@@ -123,11 +124,7 @@
     const n = store.entries(s.no, true);
     const meta = el('span', 'ehead-n', `${n.filter((e) => !e.deleted).length.toLocaleString()}줄`);
     head.append(t, d, meta);
-    if (E.moving) {
-      const b = el('button', 'btn-sm', '맨 앞으로'); b.type = 'button';
-      b.addEventListener('click', () => moveSelected(s.no, null));
-      head.append(b);
-    }
+    if (E.moving) head.append(frontButton(s.no));
     return head;
   }
 
@@ -323,7 +320,27 @@
     });
     updateBulk();
   }
-  function clearSel() { E.sel.clear(); E.anchor = null; E.moving = false; paintSelection(); A.render(true); }
+  function clearSel() { E.sel.clear(); E.anchor = null; setMoving(false); paintSelection(); }
+
+  // 옮기기 모드 켜고 끄기: 목록은 그대로 두고 안내 문구와 회차 머리의 '맨 앞으로' 버튼만 넣고 뺌
+  function setMoving(on) {
+    if (E.moving === on && !(on && !document.querySelector('.edit-note.is-move'))) { updateBulk(); return; }
+    const a = A.topVisibleEntry();
+    E.moving = on;
+    document.querySelectorAll('.edit-note.is-move, .ehead .btn-front').forEach((n) => n.remove());
+    if (on) {
+      const note = el('p', 'edit-note is-move', `${E.sel.size}줄을 옮길 자리를 고르세요. 누른 줄 바로 아래로 들어가요. 회차 맨 앞으로 옮기려면 회차 제목 옆 '맨 앞으로'를 누르세요.`);
+      $('log').prepend(note);
+      document.querySelectorAll('.ehead').forEach((h) => h.append(frontButton(Number(h.dataset.no))));
+    }
+    updateBulk();
+    if (a) A.restorePlace(a);
+  }
+  function frontButton(no) {
+    const b = el('button', 'btn-sm btn-front', '맨 앞으로'); b.type = 'button';
+    b.addEventListener('click', () => moveSelected(no, null));
+    return b;
+  }
   function selectedInOrder() {
     const all = store.allEntries(true);
     return all.filter((e) => E.sel.has(e.id)).map((e) => e.id);
@@ -379,7 +396,7 @@
     const ids = selectedInOrder().filter((id) => id !== afterId);
     if (!ids.length) return;
     E.moving = false;
-    document.querySelectorAll('.edit-note.is-move, .ehead .btn-sm').forEach((n) => n.remove());
+    document.querySelectorAll('.edit-note.is-move, .ehead .btn-front').forEach((n) => n.remove());
     E.anchorNext = topAnchor(ids);
     store.commit(`${ids.length}줄 옮기기`, { entries: placeChanges(ids, no, afterId) });
     A.toast(`${ids.length}줄을 옮겼어요`, { label: '되돌리기', run: () => store.undo() });
@@ -553,8 +570,14 @@
     requestAnimationFrame(() => { const r = document.getElementById(id); if (r) { r.scrollIntoView({ block: 'center' }); startEdit(r, store.byId.get(id)); } });
   }
 
+  // 줄바꿈 없이 이어 붙임. 낱말이 붙지 않게 띄어쓰기 한 칸 (위 글이 공백으로 끝나거나 아래 글이 문장부호로 시작하면 그대로)
+  function joinText(a, b) {
+    a = (a || '').replace(/\s+$/, ''); b = (b || '').replace(/^\s+/, '');
+    if (!a) return b; if (!b) return a;
+    return /^[.,!?~…)\]」』'"”’]/.test(b) ? a + b : a + ' ' + b;
+  }
   function mergeUp(e, prev) {
-    const merged = withText(prev, [prev.text, e.text].filter(Boolean).join('\n'));
+    const merged = withText(prev, joinText(prev.text, e.text));
     const gone = clone(e); gone.deleted = true;
     store.commit('위 줄과 합치기', { entries: [merged, gone] });
   }
@@ -827,7 +850,7 @@
 
     $('bulkKind').addEventListener('click', (ev) => { ev.stopPropagation(); kindMenu($('bulkKind'), selectedInOrder()); });
     $('bulkWho').addEventListener('click', (ev) => { ev.stopPropagation(); speakerMenu($('bulkWho'), selectedInOrder()); });
-    $('bulkMove').addEventListener('click', () => { E.moving = !E.moving; updateBulk(); A.render(true); });
+    $('bulkMove').addEventListener('click', () => setMoving(!E.moving));
     $('bulkDelete').addEventListener('click', () => trash(selectedInOrder()));
     $('bulkRestore').addEventListener('click', () => restore(selectedInOrder()));
     $('bulkClear').addEventListener('click', clearSel);
@@ -841,7 +864,7 @@
       if (ev.key === 'Escape') {
         if (menuEl) { closeMenu(); return; }
         if (!$('ask').hidden) { $('ask').hidden = true; return; }
-        if (E.moving) { E.moving = false; updateBulk(); A.render(true); return; }
+        if (E.moving) { setMoving(false); return; }
       }
       if (typing) return;
       const mod = ev.ctrlKey || ev.metaKey;
