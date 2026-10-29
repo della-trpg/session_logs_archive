@@ -132,9 +132,20 @@
   const sessionLabel = (s) => (s.no === 0 ? s.title || '준비' : s.title || `${s.no}회차`);
   const sessionOf = (no) => book().sessions.find((s) => s.no === no) || { no };
 
+  // 머리말이 상단바 밑으로 지나가면 상단바에 제목·룰·진행 날짜
+  function updateBarBook() {
+    const bar = document.querySelector('.site-bar');
+    const on = !$('bookPage').hidden && $('bookHead').getBoundingClientRect().bottom < bar.getBoundingClientRect().bottom;
+    bar.classList.toggle('show-book', on);
+  }
+
   // ── 머리말 ────────────────────────────
   function renderHead() {
     const b = book();
+    const bb = $('barBook'); bb.replaceChildren(el('b', null, b.title));
+    if (b.system) bb.append(el('span', null, b.system));
+    if (b.period && b.period.start) bb.append(el('span', 'num', fmtPeriod(b.period)));
+    updateBarBook();
     document.title = `${b.title} · 세션 기록`;
     $('bookSystem').textContent = b.system ? `${b.system} · 세션 기록` : '세션 기록';
     $('bookTitle').textContent = b.title;
@@ -350,11 +361,14 @@
   function sayLine(e) {
     const line = el('div', 'line'); line.id = e.id;
     const t = e.text.trim();
-    if (/^['‘][\s\S]*['’]$/.test(t)) { line.classList.add('say-thought'); appendText(line, t); return line; }
-    if (/^\([\s\S]*\)$/.test(t)) { line.classList.add('say-act'); appendText(line, t); return line; }
-    t.split(/(\([^()]*\))/).forEach((part) => {
+    // 줄 전체가 '생각' 하나거나 (지문) 하나면 줄 모양으로
+    if (/^['‘][^'‘’]*['’]$/.test(t)) { line.classList.add('say-thought'); appendText(line, t); return line; }
+    if (/^\([^()]*\)$/.test(t)) { line.classList.add('say-act'); appendText(line, t); return line; }
+    // 줄 안에 섞여 있으면 조각마다: (지문) · '생각'(작은따옴표) · 나머지는 말
+    t.split(/(\([^()]*\)|['‘][^'‘’\n]+['’])/).forEach((part) => {
       if (!part) return;
-      if (/^\(.*\)$/.test(part)) { const s = el('span', 'act'); appendText(s, part); line.append(s); } else appendText(line, part);
+      const cls = /^\([\s\S]*\)$/.test(part) ? 'act' : /^['‘][\s\S]*['’]$/.test(part) ? 'thought' : null;
+      if (cls) { const s = el('span', cls); appendText(s, part); line.append(s); } else appendText(line, part);
     });
     return line;
   }
@@ -841,8 +855,15 @@
     });
     window.addEventListener('hashchange', route);
     window.addEventListener('scroll', spyScene, { passive: true });
-    // 목차가 도구줄 밑에 붙도록 도구줄 높이를 CSS에 알려 줌 (편집 모드에선 더 높아짐)
-    new ResizeObserver(() => document.documentElement.style.setProperty('--toolbar-h', $('toolbar').offsetHeight + 'px')).observe($('toolbar'));
+    // 고정된 상단바·도구줄 높이를 CSS에 알려 줌 (목차 위치, 링크로 이동할 때 멈출 자리)
+    const bars = new ResizeObserver(() => {
+      const sb = document.querySelector('.site-bar').offsetHeight; const tb = $('toolbar').offsetHeight;
+      const r = document.documentElement.style;
+      r.setProperty('--sitebar-h', sb + 'px'); r.setProperty('--toolbar-h', tb + 'px'); r.setProperty('--stick-h', (sb + tb + 8) + 'px');
+    });
+    bars.observe($('toolbar')); bars.observe(document.querySelector('.site-bar'));
+    window.addEventListener('scroll', updateBarBook, { passive: true });
+    $('barBook').addEventListener('click', () => window.scrollTo({ top: 0, behavior: window.scrollY > window.innerHeight * 2 ? 'auto' : 'smooth' }));
     window.addEventListener('resize', spyScene);
     store.on((ev) => {
       if (ev.saved === false) toast(store.mode === 'demo' ? '이 브라우저에 저장하지 못했어요. 저장 공간이 부족할 수 있어요.' : `저장하지 못했어요: ${store.saveError ? store.saveError.message : ''}`);
@@ -887,5 +908,5 @@
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
     diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
-    openBook, ctx: () => ctx, paint };
+    openBook, ctx: () => ctx, paint, updateBarBook };
 })();

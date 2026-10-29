@@ -120,12 +120,22 @@
       if (error) throw new ApiError(error);
       const ids = (data || []).map((b) => b.id);
       const counts = new Map();
+      const chars = new Map();
       if (ids.length) {
-        const { data: ss } = await this.sb.from('log_sessions').select('book_id, no').in('book_id', ids);
+        const [{ data: ss }, { data: sp }] = await Promise.all([
+          this.sb.from('log_sessions').select('book_id, no').in('book_id', ids),
+          this.sb.from('log_speakers').select('book_id, name, role, char_id').in('book_id', ids),
+        ]);
         (ss || []).forEach((s) => { if (s.no > 0) counts.set(s.book_id, (counts.get(s.book_id) || 0) + 1); });
+        (sp || []).forEach((s) => {
+          if (s.role !== 'pc' && s.role !== 'npc') return;
+          if (!chars.has(s.book_id)) chars.set(s.book_id, []);
+          chars.get(s.book_id).push({ key: s.char_id || s.name, name: s.name, role: s.role });
+        });
       }
       return (data || []).map((b) => ({ id: b.id, title: b.title, system: b.system, gm: b.gm, players: b.players || [],
-        period: { start: b.period_start, end: b.period_end }, visibility: b.visibility, sessions: counts.get(b.id) || 0 }));
+        period: { start: b.period_start, end: b.period_end }, visibility: b.visibility, sessions: counts.get(b.id) || 0,
+        chars: chars.get(b.id) || [], updatedAt: b.updated_at }));
     }
 
     async loadBook(id, { admin } = {}) {
@@ -237,10 +247,18 @@
     }
     async listBooks() {
       const b = await this.base();
-      const list = [{ id: 'demo', title: b.title, system: b.system, gm: b.gm, players: b.players, period: b.period, visibility: 'public',
-        sessions: b.sessions.filter((s) => s.no > 0).length }];
-      this.imported().forEach((x) => list.push({ id: x.id, title: x.book.title, system: x.book.system, gm: x.book.gm, players: x.book.players,
-        period: x.book.period, visibility: x.book.visibility || 'draft', sessions: x.book.sessions.filter((s) => s.no > 0).length }));
+      const chars = (bk, edits) => {
+        const sp = bk.speakers.map((s) => (edits && edits.speakers && edits.speakers[s.id]) || s);
+        return sp.filter((s) => s.role === 'pc' || s.role === 'npc').map((s) => ({ key: s.charId || s.name, name: s.name, role: s.role }));
+      };
+      const meta = (id, bk) => {
+        const ed = lsGet('sl:edits:' + id) || {};   // 데모에서 고친 제목 등도 목록에 반영
+        const x = Object.assign({}, bk, ed.book || {});
+        return { id, title: x.title, system: x.system, gm: x.gm, players: x.players, period: x.period, visibility: x.visibility || 'draft',
+          sessions: bk.sessions.filter((s) => s.no > 0).length, chars: chars(bk, ed), updatedAt: null };
+      };
+      const list = [Object.assign(meta('demo', b), { visibility: 'public' })];
+      this.imported().forEach((x) => list.push(meta(x.id, x.book)));
       return list;
     }
     async loadBook(id) {

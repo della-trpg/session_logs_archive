@@ -31,6 +31,7 @@
   function showPage(which) {
     page.hidden = which !== 'page';
     $('bookPage').hidden = which !== 'book';
+    if (which !== 'book') document.querySelector('.site-bar').classList.remove('show-book');
   }
   function loading(text) { showPage('page'); page.replaceChildren(el('div', 'loading', text || '불러오는 중…')); }
   function errorBox(text, retry) {
@@ -238,6 +239,50 @@
     if (!p.end || p.end === p.start) return fmt(p.start);
     return `${fmt(p.start)} – ${p.start.slice(0, 4) === p.end.slice(0, 4) ? fmt(p.end).slice(5) : fmt(p.end)}`;
   }
+  // 정렬·필터 상태: 정렬은 이 기기에 기억, 필터는 이번 방문 동안만
+  const SORTS = [
+    ['new', '최신순', '마지막 진행일이 최근인 것부터'],
+    ['old', '오래된 순', '첫 진행일이 오래된 것부터'],
+    ['title', '가나다순', '제목 가나다순'],
+    ['updated', '최근 수정순', '최근에 고치거나 공개한 것부터'],
+    ['sessions', '회차 많은 순', '회차가 많은 것부터'],
+  ];
+  const LF = site.listFilter = { sort: SL.lsGet('sl:list-sort') || 'new', q: '', from: '', to: '', system: '', chars: new Set(), mode: 'and', open: false };
+
+  function sortBooks(list) {
+    const end = (b) => (b.period && (b.period.end || b.period.start)) || '';
+    const start = (b) => (b.period && (b.period.start || b.period.end)) || '';
+    const byTitle = (x, y) => String(x.title).localeCompare(String(y.title), 'ko');
+    const cmp = {
+      new: (x, y) => end(y).localeCompare(end(x)) || start(y).localeCompare(start(x)) || byTitle(x, y),
+      old: (x, y) => (start(x) || '9999').localeCompare(start(y) || '9999') || byTitle(x, y),
+      title: byTitle,
+      updated: (x, y) => String(y.updatedAt || '').localeCompare(String(x.updatedAt || '')) || end(y).localeCompare(end(x)),
+      sessions: (x, y) => (y.sessions - x.sessions) || end(y).localeCompare(end(x)),
+    }[LF.sort] || ((x, y) => 0);
+    return list.slice().sort(cmp);
+  }
+  function filterBooks(list) {
+    const q = LF.q.trim().toLowerCase();
+    return list.filter((b) => {
+      if (q && !String(b.title).toLowerCase().includes(q)) return false;
+      if (LF.system && (b.system || '') !== LF.system) return false;
+      if (LF.from || LF.to) {
+        const s = b.period && (b.period.start || b.period.end); const e = b.period && (b.period.end || b.period.start);
+        if (!s) return false;
+        if (LF.from && e < LF.from) return false;     // 기간이 겹치기만 하면 포함
+        if (LF.to && s > LF.to) return false;
+      }
+      if (LF.chars.size) {
+        const has = new Set((b.chars || []).map((c) => c.key));
+        const want = Array.from(LF.chars);
+        if (LF.mode === 'and' ? !want.every((k) => has.has(k)) : !want.some((k) => has.has(k))) return false;
+      }
+      return true;
+    });
+  }
+  const activeFilters = () => (LF.q.trim() ? 1 : 0) + (LF.system ? 1 : 0) + (LF.from || LF.to ? 1 : 0) + (LF.chars.size ? 1 : 0);
+
   async function home(my) {
     loading();
     let books;
@@ -256,9 +301,87 @@
     wrap.append(head);
     if (!books.length) {
       wrap.append(el('p', 'empty', site.profile.isAdmin ? '아직 기록이 없어요. Roll20 로그를 가져와 보세요.' : '아직 공개된 기록이 없어요.'));
+      page.replaceChildren(wrap);
+      return;
     }
+
+    // 정렬·찾기·필터 (기록이 2개 이상일 때)
+    const tools = el('div', 'list-tools');
+    const panel = el('div', 'list-filter');
+    const count = el('p', 'list-count'); count.setAttribute('role', 'status');
     const list = el('div', 'book-list');
-    books.forEach((b) => {
+    if (books.length >= 2) {
+      const q = el('input', 'input list-q'); q.type = 'search'; q.id = 'listQ'; q.placeholder = '제목으로 찾기'; q.value = LF.q; q.setAttribute('aria-label', '제목으로 찾기');
+      q.addEventListener('input', () => { LF.q = q.value; draw(); });
+      const sortLab = el('label', 'list-sort'); sortLab.htmlFor = 'listSort';
+      const sel = el('select'); sel.id = 'listSort';
+      SORTS.forEach(([k, label, hint]) => { const o = el('option', null, label); o.value = k; o.title = hint; o.selected = LF.sort === k; sel.append(o); });
+      sel.addEventListener('change', () => { LF.sort = sel.value; SL.lsSet('sl:list-sort', LF.sort); draw(); });
+      sortLab.append(el('span', null, '정렬'), sel);
+      const fb = el('button', 'chip filter-btn'); fb.type = 'button'; fb.id = 'listFilterBtn';
+      fb.addEventListener('click', () => { LF.open = !LF.open; draw(); });
+      tools.append(q, sortLab, fb);
+      wrap.append(tools, panel);
+      tools._fb = fb;
+    }
+    wrap.append(count, list);
+    page.replaceChildren(wrap);
+
+    // 필터에 쓸 값들: 등장 인물(여러 기록에 나온 순), 룰
+    const charMap = new Map();
+    books.forEach((b) => (b.chars || []).forEach((c) => {
+      const x = charMap.get(c.key) || { key: c.key, name: c.name, npc: c.role === 'npc', n: 0 };
+      x.n++; charMap.set(c.key, x);
+    }));
+    const allChars = Array.from(charMap.values()).sort((a, b) => (b.n - a.n) || a.name.localeCompare(b.name, 'ko'));
+    const systems = Array.from(new Set(books.map((b) => b.system).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko'));
+    LF.chars.forEach((k) => { if (!charMap.has(k)) LF.chars.delete(k); });
+
+    function drawPanel() {
+      panel.hidden = !LF.open;
+      if (!LF.open) return;
+      panel.replaceChildren();
+      const row = (label, ...kids) => { const r = el('div', 'lf-row'); r.append(el('span', 'lf-label', label)); const box = el('div', 'lf-body'); kids.forEach((k) => { if (k) box.append(k); }); r.append(box); panel.append(r); return box; };
+      // 기간
+      const from = el('input'); from.type = 'date'; from.id = 'lfFrom'; from.value = LF.from; from.setAttribute('aria-label', '이 날짜부터');
+      const to = el('input'); to.type = 'date'; to.id = 'lfTo'; to.value = LF.to; to.setAttribute('aria-label', '이 날짜까지');
+      from.addEventListener('change', () => { LF.from = from.value; draw(); });
+      to.addEventListener('change', () => { LF.to = to.value; draw(); });
+      row('진행 기간', from, el('span', 'muted', '~'), to, el('span', 'muted small', '기간이 겹치는 기록'));
+      // 룰
+      if (systems.length >= 2) {
+        const box = row('룰');
+        [['', '전부']].concat(systems.map((x) => [x, x])).forEach(([v, label]) => {
+          const c = el('button', 'chip lf-chip', label); c.type = 'button'; c.setAttribute('aria-pressed', String(LF.system === v));
+          c.addEventListener('click', () => { LF.system = v; draw(); });
+          box.append(c);
+        });
+      }
+      // 등장 인물
+      if (allChars.length) {
+        const box = row('등장 인물');
+        allChars.forEach((c) => {
+          const on = LF.chars.has(c.key);
+          const b = el('button', 'chip lf-chip', c.name + (c.npc ? ' (NPC)' : '')); b.type = 'button'; b.setAttribute('aria-pressed', String(on));
+          if (books.length > 1) b.append(el('span', 'n', String(c.n)));
+          b.addEventListener('click', () => { if (on) LF.chars.delete(c.key); else LF.chars.add(c.key); draw(); });
+          box.append(b);
+        });
+        const seg = el('div', 'seg lf-mode'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', '여러 명을 골랐을 때');
+        [['and', '고른 인물이 모두 나온 기록'], ['or', '한 명이라도 나온 기록']].forEach(([v, label]) => {
+          const b = el('button', 'seg-btn', label); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(LF.mode === v));
+          b.disabled = LF.chars.size < 2;
+          b.addEventListener('click', () => { LF.mode = v; draw(); });
+          seg.append(b);
+        });
+        row('여러 명일 때', seg, LF.chars.size < 2 ? el('span', 'muted small', '두 명 이상 고르면 고를 수 있어요') : null);
+      }
+      const clear = el('button', 'btn-sm', '필터 지우기'); clear.type = 'button'; clear.disabled = !activeFilters();
+      clear.addEventListener('click', () => { LF.q = ''; LF.from = ''; LF.to = ''; LF.system = ''; LF.chars.clear(); const q = document.getElementById('listQ'); if (q) q.value = ''; draw(); });
+      const r = el('div', 'lf-actions'); r.append(clear); panel.append(r);
+    }
+
+    function card(b) {
       const c = el('button', 'book-card'); c.type = 'button';
       const top = el('div', 'book-card-top');
       if (b.system) top.append(el('span', 'eyebrow', b.system));
@@ -268,11 +391,34 @@
       [period(b.period), b.sessions ? `${b.sessions}회차` : '', b.gm ? `GM ${b.gm}` : '', (b.players || []).length ? `PL ${b.players.join(' · ')}` : '']
         .filter(Boolean).forEach((x, i) => { if (i) meta.append(el('span', 'sep', '·')); meta.append(el('span', null, x)); });
       c.append(meta);
+      const pcs = (b.chars || []).filter((x) => x.role === 'pc'); const npcs = (b.chars || []).filter((x) => x.role === 'npc');
+      if (pcs.length || npcs.length) {
+        const cast = el('span', 'book-card-cast');
+        cast.append(el('span', 'muted', '등장 '));
+        pcs.concat(npcs).forEach((x, i) => {
+          if (i) cast.append(document.createTextNode(' · '));
+          const n = el('span', LF.chars.has(x.key) ? 'hit' : null, x.name); cast.append(n);
+        });
+        c.append(cast);
+      }
       c.addEventListener('click', () => site.nav('?b=' + encodeURIComponent(b.id)));
-      list.append(c);
-    });
-    wrap.append(list);
-    page.replaceChildren(wrap);
+      return c;
+    }
+
+    function draw() {
+      const shown = sortBooks(filterBooks(books));
+      if (tools._fb) {
+        const n = activeFilters() - (LF.q.trim() ? 1 : 0);
+        tools._fb.textContent = n ? `필터 ${n}` : '필터';
+        tools._fb.setAttribute('aria-expanded', String(LF.open));
+        tools._fb.classList.toggle('on', !!n);
+      }
+      drawPanel();
+      count.textContent = activeFilters() ? `기록 ${books.length}개 중 ${shown.length}개` : `기록 ${books.length}개`;
+      list.replaceChildren(...shown.map(card));
+      if (!shown.length) list.append(el('p', 'empty', '조건에 맞는 기록이 없어요. 필터를 바꾸거나 지워 보세요.'));
+    }
+    draw();
   }
 
   boot();
