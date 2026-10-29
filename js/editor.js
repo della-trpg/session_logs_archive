@@ -254,6 +254,18 @@
     if (anchor) A.restorePlace(anchor);
   };
 
+  // 화면(고정 도구줄 아래)에 보이는 줄 중, 옮기는 줄을 뺀 가장 위 줄 → { id, off }
+  function topAnchor(exclude) {
+    const skip = new Set(exclude || []);
+    const top = $('toolbar').getBoundingClientRect().bottom + 4;
+    for (const n of $('log').querySelectorAll('.er, .ehead')) {
+      if (skip.has(n.dataset.id)) continue;
+      const rect = n.getBoundingClientRect();
+      if (rect.bottom > top) return { id: n.id, off: rect.top };
+    }
+    return null;
+  }
+
   // 바뀐 게 순서값·회차뿐인지
   function onlyMoves(pairs) {
     for (const { a, b } of pairs.values()) {
@@ -368,8 +380,7 @@
     if (!ids.length) return;
     E.moving = false;
     document.querySelectorAll('.edit-note.is-move, .ehead .btn-sm').forEach((n) => n.remove());
-    const at = afterId ? document.getElementById(afterId) : document.querySelector(`.esess[data-no="${no}"] .ehead`);
-    if (at) E.anchorNext = { id: at.id, off: at.getBoundingClientRect().top };
+    E.anchorNext = topAnchor(ids);
     store.commit(`${ids.length}줄 옮기기`, { entries: placeChanges(ids, no, afterId) });
     A.toast(`${ids.length}줄을 옮겼어요`, { label: '되돌리기', run: () => store.undo() });
     updateBulk();
@@ -431,8 +442,8 @@
       afterId = i > 0 ? list[i - 1].id : null;
       if (afterId && ids.includes(afterId)) return;
     }
-    // 놓은 자리(대상 줄)가 화면에서 그대로 있도록
-    E.anchorNext = { id: target.id, off: r.getBoundingClientRect().top };
+    // 화면이 스크롤되지 않고 줄만 자리를 바꾸도록: 옮기지 않은 줄 중 화면 맨 위 줄을 고정
+    E.anchorNext = topAnchor(ids) || { id: target.id, off: r.getBoundingClientRect().top };
     store.commit(`${ids.length}줄 옮기기`, { entries: placeChanges(ids, target.session, afterId) });
   }
 
