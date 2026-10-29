@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- ARTIFACT-HEAD:START -->
+<title>세션 기록 보관소</title>
+<meta name="robots" content="noindex">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<!-- ARTIFACT-HEAD:END -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- ARTIFACT-BODY:START -->
+<div id="demoBanner" class="demo-banner" hidden>데모 모드 · 서버 없이 돌아가요. 관리자로 들어간 것처럼 보이고, 바꾼 내용은 이 브라우저에만 저장돼요.</div>
+
+<header class="site-bar">
+  <div class="wrap site-bar-in">
+    <div class="site-left">
+      <button type="button" class="brand" id="brand">세션 기록</button>
+      <button type="button" class="world-chip" id="worldChip" hidden title="세계관 바꾸기·코드 입력"></button>
+    </div>
+    <div class="site-right" id="siteRight"></div>
+  </div>
+</header>
+
+<main class="page" id="page" tabindex="-1">
+  <div class="loading" role="status">불러오는 중…</div>
+</main>
+
+<div id="bookPage" hidden>
+<header class="book-head" id="bookHead">
+  <div class="wrap">
+    <p class="eyebrow" id="bookSystem">세션 기록</p>
+    <h1 id="bookTitle">불러오는 중…</h1>
+    <p class="book-meta" id="bookMeta"></p>
+    <ul class="cast" id="cast" aria-label="등장인물"></ul>
+  </div>
+</header>
+
+<div class="toolbar" id="toolbar">
+  <div class="wrap toolbar-in">
+    <div class="tab-row">
+      <div class="session-tabs" id="sessionTabs" role="tablist" aria-label="회차"></div>
+      <button type="button" class="chip tool-toggle" id="toolToggle" aria-expanded="false" aria-controls="toolRow">보기·찾기</button>
+    </div>
+    <div class="tool-row" id="toolRow">
+      <div class="filters" id="filters" role="group" aria-label="보이는 종류"></div>
+      <div class="search">
+        <input id="q" type="search" placeholder="이 회차에서 찾기" autocomplete="off" aria-label="이 회차에서 찾기">
+        <span class="search-count" id="qCount"></span>
+        <button type="button" class="icon-btn" id="qPrev" aria-label="이전 결과">↑</button>
+        <button type="button" class="icon-btn" id="qNext" aria-label="다음 결과">↓</button>
+      </div>
+      <div class="view-opts">
+        <button type="button" class="chip chip-set" id="optOpen" aria-expanded="false" aria-controls="viewPanel">보기 설정</button>
+        <button type="button" class="chip chip-edit" id="optEdit" aria-pressed="false" hidden>편집하기</button>
+      </div>
+    </div>
+    <div class="view-panel" id="viewPanel" role="dialog" aria-label="보기 설정" hidden>
+      <div class="vp-head">
+        <b>보기 설정</b>
+        <button type="button" class="icon-btn" id="viewPanelClose" aria-label="닫기">✕</button>
+      </div>
+      <div id="viewOpts"></div>
+      <p class="vp-note">이 기기에서 다음에 열 때도 그대로 보여요.</p>
+    </div>
+    <div class="edit-bar" id="editBar" hidden>
+      <button type="button" class="btn-sm" id="eUndo" disabled>↶ 되돌리기</button>
+      <button type="button" class="btn-sm" id="eRedo" disabled>↷ 다시</button>
+      <span class="e-status" id="eStatus" role="status"></span>
+      <span class="e-spacer"></span>
+      <button type="button" class="btn-sm" id="eHidden" aria-pressed="true" title="회차 시작 카드·귓속말처럼 보기에서 숨는 줄">숨는 줄 보기</button>
+      <button type="button" class="btn-sm" id="eTrash" aria-pressed="false">휴지통</button>
+      <button type="button" class="btn-sm" id="ePeople">인물 설정</button>
+      <button type="button" class="btn-sm" id="eBook">기록 정보</button>
+      <button type="button" class="btn-sm danger" id="eReset" hidden>수정 모두 지우기</button>
+      <button type="button" class="btn-sm danger" id="eDelete" hidden>기록 지우기</button>
+    </div>
+    <div class="focus-pill" id="focusPill" hidden></div>
+  </div>
+</div>
+
+<div class="wrap layout">
+  <nav class="toc" id="toc" aria-label="장면 목차"></nav>
+  <main class="log-main">
+    <section class="session-head" id="sessionHead"></section>
+    <div class="log" id="log" aria-live="polite"></div>
+    <nav class="session-nav" id="sessionNav" aria-label="다른 회차"></nav>
+  </main>
+</div>
+
+</div>
+
+<div class="sheet-backdrop" id="people" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="peopleTitle">
+    <div class="sheet-head">
+      <h2 id="peopleTitle">인물 색</h2>
+      <button type="button" class="icon-btn" id="peopleClose" aria-label="닫기">✕</button>
+    </div>
+    <p class="sheet-note" id="peopleNote">대사의 이름, 아바타, 사담의 점 색이 바뀌어요. 데모에서는 이 브라우저에만 저장돼요.</p>
+    <div class="people-list" id="peopleList"></div>
+  </div>
+</div>
+
+<div class="bulk-bar" id="bulkBar" hidden>
+  <span id="bulkCount"></span>
+  <button type="button" class="btn-sm" id="bulkKind">종류</button>
+  <button type="button" class="btn-sm" id="bulkWho">말한 사람</button>
+  <button type="button" class="btn-sm" id="bulkMove">옮기기</button>
+  <button type="button" class="btn-sm danger" id="bulkDelete">휴지통으로</button>
+  <button type="button" class="btn-sm" id="bulkRestore" hidden>복원</button>
+  <button type="button" class="btn-sm" id="bulkClear">선택 해제</button>
+</div>
+
+<div class="sheet-backdrop" id="ask" hidden>
+  <form class="sheet" id="askForm" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+    <div class="sheet-head"><h2 id="askTitle"></h2></div>
+    <p class="sheet-note" id="askNote"></p>
+    <div class="ask-fields" id="askFields"></div>
+    <div class="ask-acts">
+      <button type="button" class="btn-sm" id="askCancel">취소</button>
+      <button type="submit" class="btn-sm primary" id="askOk">확인</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<!-- ARTIFACT-BODY:END -->
+<script src="config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/parse-roll20.js"></script>
+<script src="js/build-book.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/import.js"></script>
+<script src="js/site.js"></script>
+</body>
+</html>
