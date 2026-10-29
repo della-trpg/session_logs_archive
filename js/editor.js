@@ -231,13 +231,17 @@
     });
     (op.after.sessions || []).forEach(([no]) => { touched.add(no); });
     if ((op.after.sessions || []).length) structural = true;
-    const anchor = A.topVisibleEntry();
+    // 기준 줄: 끌어 놓기·옮기기는 '놓은 자리', 그 밖에는 화면 맨 위 줄 → 수정 뒤에도 그 줄이 같은 높이에 있게
+    const anchor = E.anchorNext || A.topVisibleEntry();
+    E.anchorNext = null;
     if (!structural) {
       pairs.forEach(({ a }, id) => {
         const old = document.getElementById(id);
         if (!old || !old.classList.contains('er')) return;
         if (a && E.rowVisible(a)) old.replaceWith(row(a)); else old.remove();
       });
+    } else if (!(op.after.sessions || []).length && onlyMoves(pairs) && reorderRows(pairs)) {
+      // 순서만 바뀐 경우: 다시 그리지 않고 그 줄만 옮김 (화면이 튀지 않게)
     } else {
       if (pairs.size > 400 || touched.size > 3) { A.render(true); return; }
       touched.forEach((no) => {
@@ -249,6 +253,45 @@
     }
     if (anchor) A.restorePlace(anchor);
   };
+
+  // 바뀐 게 순서값·회차뿐인지
+  function onlyMoves(pairs) {
+    for (const { a, b } of pairs.values()) {
+      if (!a || !b || a.kind !== b.kind || !!a.deleted !== !!b.deleted || a.text !== b.text || a.speaker !== b.speaker) return false;
+    }
+    return true;
+  }
+  // 바뀐 줄을 새 순서에 맞는 자리로 옮김. 못 하면 false (→ 회차를 다시 그림)
+  function reorderRows(pairs) {
+    const moved = [];
+    pairs.forEach(({ a, b }) => { if (a.seq !== b.seq || a.session !== b.session) moved.push(a); });
+    if (moved.length > 300) return false;
+    const order = store.book.sessions.map((x) => x.no);
+    moved.sort((x, y) => (order.indexOf(x.session) - order.indexOf(y.session)) || (x.seq - y.seq));
+    const sessions = new Set();
+    for (const m of moved) {
+      const e = store.byId.get(m.id);
+      const old = document.getElementById(m.id);
+      if (!E.rowVisible(e)) { if (old) old.remove(); continue; }
+      const sec = document.querySelector(`.esess[data-no="${e.session}"]`);
+      if (!sec) return false;
+      const node = old && old.classList.contains('er') ? old : row(e);
+      const list = store.entries(e.session, true).filter(E.rowVisible);
+      const i = list.findIndex((x) => x.id === e.id);
+      const prev = i > 0 ? document.getElementById(list[i - 1].id) : sec.querySelector('.ehead');
+      if (!prev || prev === node) return false;
+      prev.after(node);
+      sessions.add(e.session);
+      if (old && old !== node) sessions.add(Number(old.closest('.esess') && old.closest('.esess').dataset.no));
+    }
+    // 회차 머리의 줄 수
+    pairs.forEach(({ b }) => sessions.add(b.session));
+    sessions.forEach((no) => {
+      const h = document.querySelector(`.esess[data-no="${no}"] .ehead-n`);
+      if (h) h.textContent = `${store.entries(no).length.toLocaleString()}줄`;
+    });
+    return true;
+  }
 
   // ── 선택 ────────────────────────────────
   function visibleIds() { return Array.from($('log').querySelectorAll('.er')).map((r) => r.dataset.id); }
@@ -324,6 +367,9 @@
     const ids = selectedInOrder().filter((id) => id !== afterId);
     if (!ids.length) return;
     E.moving = false;
+    document.querySelectorAll('.edit-note.is-move, .ehead .btn-sm').forEach((n) => n.remove());
+    const at = afterId ? document.getElementById(afterId) : document.querySelector(`.esess[data-no="${no}"] .ehead`);
+    if (at) E.anchorNext = { id: at.id, off: at.getBoundingClientRect().top };
     store.commit(`${ids.length}줄 옮기기`, { entries: placeChanges(ids, no, afterId) });
     A.toast(`${ids.length}줄을 옮겼어요`, { label: '되돌리기', run: () => store.undo() });
     updateBulk();
@@ -332,17 +378,43 @@
   // ── 끌어서 옮기기 (PC) ───────────────────
   function dragStart(ev, e) {
     const ids = E.sel.has(e.id) ? selectedInOrder() : [e.id];
-    E.drag = { ids };
+    E.drag = { ids, y: null };   // 첫 dragover에서 실제 위치를 받기 전엔 스크롤하지 않음
     ev.dataTransfer.effectAllowed = 'move';
     try { ev.dataTransfer.setData('text/plain', ids.join(',')); } catch (err) { /* 무시 */ }
+    const r = document.getElementById(e.id);
+    if (r && ev.dataTransfer.setDragImage) ev.dataTransfer.setDragImage(r, 24, Math.min(16, r.offsetHeight / 2));
     document.body.classList.add('dragging');
+    autoScroll();
   }
-  function dragEnd() { E.drag = null; document.body.classList.remove('dragging'); $('log').querySelectorAll('.drop-before, .drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after')); }
+  function dragEnd() {
+    E.drag = null; document.body.classList.remove('dragging');
+    $('log').querySelectorAll('.drop-before, .drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after'));
+  }
+  // 끄는 동안 화면 가장자리에 가까우면 부드럽게 스크롤. 위쪽 기준은 고정 도구줄 바로 아래.
+  document.addEventListener('dragover', (ev) => { if (E.drag) E.drag.y = ev.clientY; });
+  function autoScroll() {
+    const step = () => {
+      if (!E.drag) return;
+      const top = $('toolbar').getBoundingClientRect().bottom;
+      const bottom = window.innerHeight;
+      const zone = 60; const y = E.drag.y;
+      let v = 0;
+      if (y == null) v = 0;
+      else if (y < top + zone) v = -Math.ceil(((top + zone - Math.max(y, top - 20)) / zone) * 14);
+      else if (y > bottom - zone) v = Math.ceil(((y - (bottom - zone)) / zone) * 14);
+      if (v) window.scrollBy(0, v);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
   function dragOver(ev, r) {
     if (!E.drag) return;
     ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
     const rect = r.getBoundingClientRect();
     const after = ev.clientY > rect.top + rect.height / 2;
+    if (r.classList.contains(after ? 'drop-after' : 'drop-before')) return;
+    $('log').querySelectorAll('.drop-before, .drop-after').forEach((n) => { if (n !== r) n.classList.remove('drop-before', 'drop-after'); });
     r.classList.toggle('drop-after', after); r.classList.toggle('drop-before', !after);
   }
   function drop(ev, r, target) {
@@ -359,6 +431,8 @@
       afterId = i > 0 ? list[i - 1].id : null;
       if (afterId && ids.includes(afterId)) return;
     }
+    // 놓은 자리(대상 줄)가 화면에서 그대로 있도록
+    E.anchorNext = { id: target.id, off: r.getBoundingClientRect().top };
     store.commit(`${ids.length}줄 옮기기`, { entries: placeChanges(ids, target.session, afterId) });
   }
 
