@@ -75,6 +75,57 @@
     return t;
   }
 
+  // ── 인물 색 → 테마마다 읽히는 글자색 ─────────────
+  // 고른 색(--c)은 아바타·점에 그대로 쓰고, 이름 글자는 배경과의 대비가 4.5:1이 되도록 밝기만 조절한
+  // 밝은 테마용(--cl)·어두운 테마용(--cd)을 씀. 아바타 첫 글자는 흰색/검정 중 잘 보이는 쪽(--con).
+  const BG_LIGHT = ['#eef0f3', '#fbfbfc', '#f6f3ea'];   // style.css 밝은 테마 --bg · --surface · --narr-bg
+  const BG_DARK = ['#12151d', '#191d28', '#221f18'];    // 어두운 테마 같은 자리
+  const hexRgb = (h) => { const m = String(h || '').replace('#', '').match(/^([0-9a-f]{6})$/i); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  const lum = ([r, g, b]) => { const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const contrast = (a, b) => { const x = lum(a); const y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  function rgbHsl([r, g, b]) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b); const mn = Math.min(r, g, b); const l = (mx + mn) / 2;
+    if (mx === mn) return [0, 0, l];
+    const d = mx - mn; const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h / 6, s, l];
+  }
+  function hslRgb([h, s, l]) {
+    if (!s) return [l, l, l].map((v) => Math.round(v * 255));
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s; const p = 2 * l - q;
+    const t = (x) => { x = (x + 1) % 1; return x < 1 / 6 ? p + (q - p) * 6 * x : x < 1 / 2 ? q : x < 2 / 3 ? p + (q - p) * (2 / 3 - x) * 6 : p; };
+    return [t(h + 1 / 3), t(h), t(h - 1 / 3)].map((v) => Math.round(v * 255));
+  }
+  const toHex = (rgb) => '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+  function readable(rgb, bgs, dir) {
+    const hsl = rgbHsl(rgb);
+    let cur = rgb;
+    for (let i = 0; i < 100; i++) {
+      if (bgs.every((bg) => contrast(cur, hexRgb(bg)) >= 4.5)) break;
+      hsl[2] = Math.min(1, Math.max(0, hsl[2] + dir * 0.01));
+      cur = hslRgb(hsl);
+    }
+    return toHex(cur);
+  }
+  const colorCache = new Map();
+  function colorVars(hex) {
+    if (colorCache.has(hex)) return colorCache.get(hex);
+    const rgb = hexRgb(hex);
+    const v = rgb
+      ? { c: hex, cl: readable(rgb, BG_LIGHT, -1), cd: readable(rgb, BG_DARK, +1),
+        con: contrast(rgb, [255, 255, 255]) >= contrast(rgb, [20, 23, 31]) ? '#ffffff' : '#14171f' }
+      : { c: '', cl: '', cd: '', con: '' };
+    colorCache.set(hex, v);
+    return v;
+  }
+  function paint(node, s) {
+    const v = colorVars(s ? s.color : null);
+    node.style.setProperty('--c', v.c); node.style.setProperty('--cl', v.cl);
+    node.style.setProperty('--cd', v.cd); node.style.setProperty('--con', v.con);
+    return node;
+  }
+
   const book = () => store.book;
   const spk = (id) => (id ? store.spk.get(id) : null);
   const sessionList = () => book().sessions.filter((s) => store.entries(s.no).length);
@@ -114,7 +165,7 @@
 
   function avatar(s) {
     const a = el('span', 'avatar');
-    a.style.setProperty('--c', s ? s.color : '');
+    paint(a, s);
     a.setAttribute('aria-hidden', 'true');
     if (s && s.imageUrl) { const img = el('img'); img.alt = ''; img.src = s.imageUrl; a.append(img); } else a.textContent = s ? Array.from(s.name)[0] || '?' : '?';
     return a;
@@ -332,7 +383,7 @@
     const s = spk(e.speaker);
     if (e.kind === 'dialogue') {
       const g = groupShell('g-say', e);
-      g.style.setProperty('--c', s ? s.color : '');
+      paint(g, s);
       g.append(avatar(s));
       const body = el('div');
       const who = el('div', 'who'); who.append(el('span', 'name', s ? s.name : '알 수 없음'));
@@ -349,8 +400,8 @@
         const row = el('div', 'chat-row');
         const who = el('span', 'who');
         if (x.speaker !== prev) {
-          const d = el('span', 'dot'); d.style.setProperty('--c', xs ? xs.color : '');
-          who.append(d, el('b', null, xs ? xs.name : '알 수 없음'));
+          const d = paint(el('span', xs ? 'dot' : 'dot unknown'), xs);
+          who.append(d, el('b', xs ? null : 'unknown', xs ? xs.name : '알 수 없음'));
           if (xs && xs.role === 'gm') who.append(el('span', 'tag', 'GM'));
           const t = timeEl(x); if (t) who.append(t);
         }
@@ -389,13 +440,15 @@
   }
 
   // ── 주사위 카드 ───────────────────────
-  function dieFace(v, d6) {
+  function dieFace(v, d6, sides) {
     if (d6 && v >= 1 && v <= 6) {
       const d = el('span', 'die'); d.setAttribute('role', 'img'); d.setAttribute('aria-label', String(v));
       PIPS[v].forEach((c) => { const i = el('i'); i.style.gridRow = String(Math.ceil(c / 3)); i.style.gridColumn = String(((c - 1) % 3) + 1); d.append(i); });
       return d;
     }
-    return el('span', 'die-num', String(v));
+    const n = el('span', 'die-num', String(v));
+    if (sides) n.title = 'd' + sides;
+    return n;
   }
   function diceLabel(d) {
     if (d.label) return d.label;
@@ -409,7 +462,7 @@
     const top = el('div', 'dice-top');
     const whoName = d.who && !/님\s*PC$/i.test(d.who) ? d.who : s ? s.name : '';
     const whoSp = book().speakers.find((x) => x.name === whoName) || s;
-    if (whoSp) top.style.setProperty('--c', whoSp.color);
+    if (whoSp) paint(top, whoSp);
     top.append(el('b', null, whoName), el('span', 'dice-kind', diceLabel(d)));
     const t = timeEl(e); if (t) top.append(t);
     card.append(top);
@@ -419,10 +472,10 @@
     if (d.kind === 'pick') { const ti = el('span', 'dice-title'); appendText(ti, `${d.domain ? d.domain + ' → ' : ''}${d.pick}`); main.append(ti); }
     if (d.dice && d.dice.length) {
       const exprs = d.rolls || [];
-      const d6 = exprs.length > 0 && exprs.every((x) => /^\d*d6$/i.test(x));
+      const allD6 = exprs.length > 0 && exprs.every((x) => /^\d*d6$/i.test(x));   // 예전 데이터(면 수 없음)용
       if (!d.title && d.kind === 'roll' && exprs.length) main.append(el('span', 'dice-target', exprs.join(' + ').toUpperCase()));
       const faces = el('span', 'dice-faces');
-      d.dice.forEach((v) => faces.append(dieFace(v, d6)));
+      d.dice.forEach((v, i) => faces.append(dieFace(v, d.sides ? d.sides[i] === 6 : allD6, d.sides && d.sides[i])));
       main.append(faces);
       if (d.mod) main.append(el('span', 'dice-sum', d.mod > 0 ? `+${d.mod}` : `−${Math.abs(d.mod)}`));
       const total = d.sum != null ? d.sum : d.total;
@@ -727,9 +780,14 @@
       const row = el('div', 'person');
       const isChar = s.role === 'pc' || s.role === 'npc';
       const sw = isChar ? avatar(s) : el('span', 'dot big');
-      sw.style.setProperty('--c', s.color);
+      paint(sw, s);
       const name = el('div', 'person-name');
       name.append(el('b', null, s.name), el('span', null, roleName[s.role] || ''));
+      // 이름이 밝은·어두운 테마에서 어떻게 보이는지 (자동으로 밝기를 맞춘 글자색)
+      const pv = paint(el('span', 'name-preview'), s);
+      pv.title = '이름 글자는 테마마다 읽히도록 밝기를 자동으로 맞춰요';
+      pv.append(el('span', 'np-l', s.name), el('span', 'np-d', s.name));
+      if (isChar) name.append(pv);   // 플레이어·GM 이름은 색 글자로 쓰이지 않음
       const pick = el('div', 'swatches');
       SWATCHES.forEach((c) => {
         const b = el('button', 'swatch'); b.type = 'button'; b.style.background = c; b.title = c;
@@ -829,5 +887,5 @@
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
     diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
-    openBook, ctx: () => ctx };
+    openBook, ctx: () => ctx, paint };
 })();

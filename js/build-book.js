@@ -53,16 +53,30 @@
       if (s.player) { const p = byKey.get(s.player); s.player = p ? p.id : null; }
     });
 
+    // 이름이 빠진 사담: Roll20이 말한 사람이 바뀌어도 이름을 빼먹는 경우가 있어서, 앞사람으로 붙이지 않고
+    // '알 수 없음' + 화자 확인 표시 (cfg.unknownNameless = false 면 예전처럼 앞사람). 내보낸 사람 본인 것은 확실하니 그 사람으로.
+    const unknownNameless = cfg.unknownNameless !== false;
+    const exporter = raw.exporter ? byKey.get(raw.exporter) : null;
+    const isCharSp = (x) => x && (x.role === 'pc' || x.role === 'npc');
     const entries = raw.entries.map((e, i) => {
-      const sp = e.speaker ? byKey.get(e.speaker) : null;
+      let sp = e.speaker ? byKey.get(e.speaker) : null;
       let kind = e.kind;
-      if (kind === 'talk') kind = sp && (sp.role === 'pc' || sp.role === 'npc') ? 'dialogue' : 'chat';
+      let unsure = !!e.uncertain;
+      if (kind === 'talk') {
+        const namelessChat = unknownNameless && e.noName && (e.gray || !isCharSp(sp));
+        if (namelessChat) {
+          kind = 'chat';
+          if (e.you && exporter) { sp = exporter; unsure = false; } else { sp = null; unsure = true; }
+        } else kind = isCharSp(sp) ? 'dialogue' : 'chat';
+      } else if (kind === 'dice' && e.noName && e.you && exporter && sp !== exporter && !isCharSp(sp)) {
+        sp = exporter;   // 이름 빠진 주사위 줄 중 내보낸 사람 것은 확실
+      }
       const out = { id: 'e' + (i + 1), seq: (i + 1) * 1000, session: 0, kind, speaker: sp ? sp.id : null,
         text: e.text || '', ts: e.ts, src: e.src };
       if (e.dice) out.dice = e.dice;
       if (e.to) out.to = e.to;
       if (e.from) out.from = e.from;
-      if (e.uncertain) out.uncertain = true;
+      if (unsure) out.uncertain = true;
       return out;
     });
 

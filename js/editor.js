@@ -139,8 +139,8 @@
     const b = el('button', 'er-who'); b.type = 'button';
     b.title = '말한 사람 바꾸기';
     if (s) {
-      const d = el('span', 'dot'); d.style.setProperty('--c', s.color); b.append(d, el('span', null, s.name));
-    } else b.append(el('span', 'muted', e.kind === 'narration' || e.kind === 'scene' || e.kind === 'system' ? '—' : '없음'));
+      const d = A.paint(el('span', 'dot'), s); b.append(d, el('span', null, s.name));
+    } else b.append(el('span', 'muted', e.kind === 'narration' || e.kind === 'scene' || e.kind === 'system' ? '—' : '알 수 없음'));
     return b;
   }
 
@@ -646,14 +646,14 @@
     const sp = store.book.speakers;
     const chars = sp.filter(isChar); const others = sp.filter((s) => !isChar(s));
     const mk = (s) => ({
-      label: s ? s.name : '없음', color: s && s.color, run: () => {
+      label: s ? s.name : '알 수 없음 / 없음', color: s && s.color, run: () => {
         const ch = ids.map((id) => store.byId.get(id)).map((e) => {
           const n = clone(e); n.speaker = s ? s.id : null; delete n.uncertain;
           // 대사↔사담은 말한 사람에 맞춰 같이 바꿈
           if (s && (n.kind === 'dialogue' || n.kind === 'chat')) n.kind = isChar(s) ? 'dialogue' : 'chat';
           return n;
         });
-        store.commit(`${ch.length}줄 말한 사람 → ${s ? s.name : '없음'}`, { entries: ch });
+        store.commit(`${ch.length}줄 말한 사람 → ${s ? s.name : '알 수 없음'}`, { entries: ch });
       },
     });
     openMenu(btn, [{ heading: '캐릭터' }].concat(chars.map(mk), [{ heading: '플레이어 · GM' }], others.map(mk), ['-', mk(null)]));
@@ -703,6 +703,7 @@
         { id: 'bi-end', label: '종료일', type: 'date', value: (b.period && b.period.end) || '' },
       ].concat(labelFields),
       ok: '저장',
+      extra: [{ label: '원본 로그로 화자 규칙 다시 적용…', run: reapplyRules }],
       run: (v) => {
         const dl = {};
         const [vis, ...w] = v;
@@ -775,7 +776,7 @@
       if (it === '-') { menuEl.append(el('div', 'emenu-sep')); return; }
       if (it.heading) { menuEl.append(el('div', 'emenu-h', it.heading)); return; }
       const b = el('button', 'emenu-item' + (it.danger ? ' danger' : '')); b.type = 'button'; b.setAttribute('role', 'menuitem');
-      if (it.color) { const d = el('span', 'dot'); d.style.setProperty('--c', it.color); b.append(d); }
+      if (it.color) { const d = A.paint(el('span', 'dot'), { color: it.color }); b.append(d); }
       b.append(el('span', null, it.label));
       if (it.hint) b.append(el('small', null, it.hint));
       b.disabled = !!it.disabled;
@@ -820,9 +821,75 @@
       return inp;
     });
     $('askOk').textContent = o.ok || '확인';
+    // 왼쪽에 붙는 추가 버튼 (예: 기록 정보의 '원본 로그로 다시 적용')
+    document.querySelectorAll('#askForm .ask-extra').forEach((n) => n.remove());
+    (o.extra || []).forEach((x) => {
+      const b = el('button', 'btn-sm ask-extra', x.label); b.type = 'button';
+      b.addEventListener('click', () => { back.hidden = true; x.run(); });
+      $('askCancel').before(b);
+    });
     form.onsubmit = (ev) => { ev.preventDefault(); back.hidden = true; o.run(inputs.map((i) => i.value)); };
     back.hidden = false;
-    inputs[0].focus();
+    (inputs[0] || $('askOk')).focus();
+  }
+
+  // ── 원본 로그로 화자 규칙 다시 적용 ───────
+  // 이미 가져와서 고치던 기록에 새 가져오기 규칙(이름 빠진 사담 → 알 수 없음, 내보낸 사람 줄 확정)을 소급 적용.
+  // 줄은 Roll20 메시지 ID(src)로 짝을 맞추고, 예전 규칙과 새 규칙의 결과가 다른 줄만,
+  // 그리고 말한 사람을 직접 고치지 않은 줄(지금 값 = 예전 규칙 결과)만 바꿈.
+  function reapplyRules() {
+    const input = el('input'); input.type = 'file'; input.accept = '.html,.htm,text/html';
+    input.addEventListener('change', () => {
+      const f = input.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { try { planReapply(String(r.result)); } catch (e) { A.toast(e.message || '원본 로그를 읽지 못했어요'); } };
+      r.readAsText(f, 'utf-8');
+    });
+    input.click();
+  }
+  E.planReapply = planReapply;
+  function planReapply(html) {
+    const raw = SL.parseRoll20(html);
+    // 가져올 때 인물 id는 원본에 나온 순서대로 p1, p2… → 지금 역할을 그대로 써서 두 규칙으로 다시 만들어 봄
+    const roles = {};
+    raw.speakers.forEach((s, i) => { const b = store.spk.get('p' + (i + 1)); if (b) roles[s.key] = { role: b.role }; });
+    const before = SL.buildBook(raw, { speakers: roles, unknownNameless: false });
+    const after = SL.buildBook(raw, { speakers: roles, unknownNameless: true });
+    const bySrc = new Map();
+    before.entries.forEach((o, i) => {
+      if (o.kind === 'system' || o.kind === 'meta' || !o.src) return;   // 컷인 진행 표시는 같은 메시지 ID를 나눠 씀
+      bySrc.set(o.src, { o, n: after.entries[i] });
+    });
+    const withSrc = store.book.entries.filter((e) => e.src && e.kind !== 'system' && e.kind !== 'meta');
+    let matched = 0; let kept = 0;
+    const changes = [];
+    withSrc.forEach((e) => {
+      const m = bySrc.get(e.src); if (!m) return;
+      matched++;
+      const { o, n } = m;
+      if (o.speaker === n.speaker && !!o.uncertain === !!n.uncertain) return;   // 규칙이 바꾸지 않는 줄
+      if ((e.speaker || null) !== (o.speaker || null)) { kept++; return; }      // 말한 사람을 직접 고친 줄
+      const c = clone(e);
+      c.speaker = n.speaker;
+      if (e.kind === o.kind) c.kind = n.kind;
+      if (n.uncertain) c.uncertain = true; else delete c.uncertain;
+      changes.push(c);
+    });
+    if (!withSrc.length || matched < withSrc.length * 0.5) {
+      A.toast('이 기록을 가져온 원본 로그가 아닌 것 같아요. 같은 Roll20 파일을 골라 주세요.');
+      return;
+    }
+    if (!changes.length) { A.toast(kept ? `바꿀 줄이 없어요 (직접 고친 ${kept}줄은 그대로)` : '이미 새 규칙대로예요. 바꿀 줄이 없어요.'); return; }
+    ask({
+      title: '원본 로그로 화자 규칙 다시 적용',
+      note: `이름이 빠진 사담 등 ${changes.length.toLocaleString()}줄의 말한 사람이 바뀌어요.` +
+        (kept ? ` 말한 사람을 이미 직접 고친 ${kept.toLocaleString()}줄은 그대로 둬요.` : '') + ' 적용한 뒤 되돌리기로 한 번에 취소할 수 있어요.',
+      fields: [], ok: `${changes.length.toLocaleString()}줄 적용`,
+      run: () => {
+        store.commit(`화자 규칙 다시 적용 (${changes.length}줄)`, { entries: changes });
+        A.toast(`${changes.length.toLocaleString()}줄에 새 규칙을 적용했어요`, { label: '되돌리기', run: () => store.undo() });
+      },
+    });
   }
 
   function copy(text) {

@@ -8,7 +8,8 @@
  * {
  *   source: 'roll20',
  *   speakers: [{ key, name, guess: 'pc'|'pl'|'gm', avatars: [url], count }],
- *   entries:  [{ src, ts, kind, speaker, text, dice?, gray? }],
+ *   entries:  [{ src, ts, kind, speaker, text, dice?, gray?, noName?, you? }],
+ *   exporter: 로그를 내보낸 사람(플레이어 이름) — 그 사람의 메시지에는 'you' 표시가 남음
  *   stats:    { messages, skipped, ... }
  * }
  * kind: narration | talk | dice | system | whisper
@@ -63,6 +64,18 @@
       if (Number.isFinite(v) && n.trim() !== '') dice.push(v);
     }));
     return { expr, dice };
+  }
+
+  // 굴림 하나 → 눈 하나하나 + 면 수 + 고정값. 'Rolling 1d6+3 = (2)+3' → faces [2], sides [6], extra 3
+  function rollFaces(expr, faces, total) {
+    const sides = [];
+    for (const m of String(expr).matchAll(/(\d*)d(\d+)/gi)) {
+      const n = m[1] ? Number(m[1]) : 1;
+      for (let i = 0; i < n; i++) sides.push(Number(m[2]));
+    }
+    const sum = faces.reduce((a, b) => a + b, 0);
+    const extra = faces.length && Number.isFinite(total) ? total - sum : 0;
+    return { faces, sides: faces.map((_, i) => sides[i] || null), extra };
   }
 
   // 글 노드 → 텍스트. 줄바꿈 보존, 인라인 굴림·그림 처리
@@ -130,14 +143,20 @@
     const diceEl = q('sheet-dice');
     if (diceEl) {
       card.dice = [];
+      card.sides = [];
       card.rolls = [];
       diceEl.querySelectorAll('.inlinerollresult').forEach((r) => {
         const v = Number(r.textContent.trim());
         const pr = parseRollTitle(r.getAttribute('title'));
         if (!/d/i.test(pr.expr)) { if (Number.isFinite(v)) card.mod = (card.mod || 0) + v; return; }  // 수정치(-1 등)
         card.rolls.push(pr.expr);
-        if (Number.isFinite(v)) card.dice.push(v);
+        const f = rollFaces(pr.expr, pr.dice, v);
+        if (f.faces.length) {           // 2D6 = (5+4) → 5, 4 따로
+          card.dice.push(...f.faces); card.sides.push(...f.sides);
+          if (f.extra) card.mod = (card.mod || 0) + f.extra;   // 1D6+3 의 +3
+        } else if (Number.isFinite(v)) { card.dice.push(v); card.sides.push(null); }
       });
+      if (!card.mod) delete card.mod;
     }
 
     const info = q('sheet-info');
@@ -224,7 +243,7 @@
     const entries = [];
     const stats = { messages: msgs.length, skipped: 0, inheritedSpeaker: 0 };
 
-    let curName = null; let curAvatar = null; let curTs = null; let afterNarr = false;
+    let curName = null; let curAvatar = null; let curTs = null; let afterNarr = false; let exporter = null;
 
     function speakerFor(name, avatar) {
       const isGm = /\(GM\)\s*$/.test(name);
@@ -256,6 +275,8 @@
       if (by && !isWhisper) {
         curName = by.textContent.replace(/:\s*$/, '').trim();
         curAvatar = av ? av.getAttribute('src') : null;
+        // 로그를 내보낸 사람: 'you' 표시가 붙은 메시지를 플레이어 이름으로 보낸 사람
+        if (!exporter && cls.contains('you') && curAvatar && curAvatar.startsWith('/users/avatar/')) exporter = curName.replace(/\s*\(GM\)\s*$/, '').trim();
       } else if (!by && !isDesc && !isEmote) {
         stats.inheritedSpeaker++;
       }
@@ -285,7 +306,9 @@
         const sp = curName ? speakerFor(curName, curAvatar) : null;
         if (sp) sp.count++;
         const dice = tpl.className.includes('sheet-rolltemplate-MagiDice') ? parseMagiCard(tpl) : parseOtherTemplate(tpl);
-        entries.push({ ...base, kind: 'dice', speaker: sp ? sp.key : null, dice, text: '' });
+        const de = { ...base, kind: 'dice', speaker: sp ? sp.key : null, dice, text: '' };
+        if (!by) { de.noName = true; if (cls.contains('you')) de.you = true; }
+        entries.push(de);
         return;
       }
 
@@ -306,21 +329,28 @@
 
       if (onlyRolls) {
         if (sp) sp.count++;
-        entries.push({ ...base, kind: 'dice', speaker: sp ? sp.key : null, text: '',
-          dice: { template: 'inline', kind: 'roll', rolls: acc.rolls.map((r) => r.expr),
-            dice: acc.rolls.flatMap((r) => r.dice), total: acc.rolls.length === 1 ? acc.rolls[0].total : null,
-            totals: acc.rolls.map((r) => r.total) } });
+        entries.push({ ...base, kind: 'dice', speaker: sp ? sp.key : null, text: '', ...(by ? {} : { noName: true, ...(cls.contains('you') ? { you: true } : {}) }),
+          dice: (() => {
+            const fs = acc.rolls.map((r) => rollFaces(r.expr, r.dice, r.total));
+            const d = { template: 'inline', kind: 'roll', rolls: acc.rolls.map((r) => r.expr),
+              dice: fs.flatMap((f) => f.faces), sides: fs.flatMap((f) => f.sides),
+              total: acc.rolls.length === 1 ? acc.rolls[0].total : null, totals: acc.rolls.map((r) => r.total) };
+            const extra = fs.reduce((a, f) => a + f.extra, 0);
+            if (extra) d.mod = extra;
+            return d;
+          })() });
         return;
       }
       if (!text) { if (!acc.cutins.length) stats.skipped++; return; }
       if (sp) sp.count++;
       const e = { ...base, kind: 'talk', speaker: sp ? sp.key : null, text };
       if (gray) e.gray = true;
+      if (!by) { e.noName = true; if (cls.contains('you')) e.you = true; }   // 이름이 빠진 줄 (앞사람 이름을 이어받은 것)
       entries.push(e);
     });
 
     stats.entries = entries.length;
-    return { source: 'roll20', speakers: Array.from(speakers.values()), entries, stats };
+    return { source: 'roll20', speakers: Array.from(speakers.values()), entries, stats, exporter };
   }
 
   g.SL = g.SL || {};

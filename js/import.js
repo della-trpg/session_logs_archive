@@ -12,7 +12,7 @@
   const CHUNK = 1000;
 
   SL.importPage = function (root, ctx) {
-    const st = { raw: null, cfg: null, world: ctx.world.id, prep: true, chars: [], book: null };
+    const st = { raw: null, cfg: null, world: ctx.world.id, prep: true, unknown: true, chars: [], book: null };
     const wrap = el('div', 'imp');
     const back = el('button', 'btn-link', '← 기록 목록'); back.type = 'button'; back.addEventListener('click', () => ctx.nav(''));
     wrap.append(back, el('h1', 'home-title', 'Roll20 로그 가져오기'),
@@ -88,6 +88,10 @@
       cb.addEventListener('change', () => { st.prep = cb.checked; preview(); });
       prep.append(cb, el('span', null, '1회차 전 준비 대화도 넣기 (캐릭터 소개 등)'));
       info.append(prep);
+      const unk = el('label', 'check'); const cb2 = el('input'); cb2.type = 'checkbox'; cb2.id = 'impUnknown'; cb2.checked = st.unknown;
+      cb2.addEventListener('change', () => { st.unknown = cb2.checked; preview(); });
+      unk.append(cb2, el('span', null, "이름이 빠진 사담은 '알 수 없음'으로 넣기 (끄면 앞사람의 말로)"));
+      info.append(unk);
       body.append(info);
 
       // 인물
@@ -140,7 +144,7 @@
         sp[k] = { name: c.name.trim() || k, role: c.role, color: c.color, charId: c.charId || null,
           player: (c.role === 'pc' || c.role === 'npc') && c.player ? c.player : null };
       });
-      return { title: st.cfg.title.trim() || null, system: st.cfg.system.trim() || null, gm: st.cfg.gm.trim() || null,
+      return { unknownNameless: st.unknown, title: st.cfg.title.trim() || null, system: st.cfg.system.trim() || null, gm: st.cfg.gm.trim() || null,
         players: st.cfg.players.split(',').map((x) => x.trim()).filter(Boolean), speakers: sp };
     }
     function build() {
@@ -179,11 +183,13 @@
           t.append(row);
         });
         box.append(t);
-        const unc = b.entries.filter((e) => e.uncertain).length;
+        const unknown = b.entries.filter((e) => e.kind === 'chat' && !e.speaker && e.uncertain).length;
+        const unc = b.entries.filter((e) => e.uncertain).length - unknown;
         const notes = [];
         if (b.sessions.length <= 1) notes.push('회차 구분(나레이션의 날짜 줄)을 찾지 못해서 한 회차로 들어가요. 편집 화면에서 "이 줄부터 다음 회차로"로 나눌 수 있어요.');
-        if (unc) notes.push(`말한 사람이 애매한 줄 ${unc}개에 '화자 확인' 표시를 붙였어요.`);
-        notes.push('Roll20이 이름을 빼먹은 줄은 앞사람의 말로 들어가요. 편집 화면에서 고칠 수 있어요.');
+        if (st.unknown) notes.push(`Roll20이 이름을 빼먹은 사담 ${unknown.toLocaleString()}줄은 '알 수 없음'으로 넣고 '화자 확인' 표시를 붙였어요. 로그를 내보낸 사람 본인의 줄은 확실해서 그 사람으로 넣었어요.`);
+        else notes.push('Roll20이 이름을 빼먹은 줄은 앞사람의 말로 들어가요. 틀린 경우가 섞여 있으니 편집 화면에서 확인해 주세요.');
+        if (unc > 0) notes.push(`그 밖에 말한 사람이 애매한 줄 ${unc}개에도 '화자 확인' 표시를 붙였어요.`);
         const ul = el('ul', 'imp-notes'); notes.forEach((n) => ul.append(el('li', null, n))); box.append(ul);
       }, 150);
     }
