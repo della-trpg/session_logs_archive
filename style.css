@@ -621,3 +621,251 @@ body.editing .toast { bottom: calc(5rem + env(safe-area-inset-bottom, 0px)); }
 .list-count { margin: 0; font-size: 0.8rem; color: var(--muted); }
 .book-card-cast { font-size: 0.82rem; color: var(--ink-soft); }
 .book-card-cast .hit { color: var(--accent); font-weight: 600; }
+
+/* ── 노벨 보기 ─────────────────────────
+   무대(서고의 밤/낮) 위에 인물 카드, 아래 대사 상자. 말하는 사람만 밝게, 그 사람 색으로 은은한 빛. */
+:root {
+  --nv-top: #f8f6ef; --nv-mid: #e6e8ee; --nv-low: #d3d7e1;
+  --nv-floor: rgba(28, 33, 48, 0.07); --nv-glow-op: 0.2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --nv-top: #262b3b; --nv-mid: #161a25; --nv-low: #0c0e14; --nv-floor: rgba(0, 0, 0, 0.35); --nv-glow-op: 0.3; }
+}
+:root[data-theme="dark"] { --nv-top: #262b3b; --nv-mid: #161a25; --nv-low: #0c0e14; --nv-floor: rgba(0, 0, 0, 0.35); --nv-glow-op: 0.3; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+html.nv-open, html.nv-open body { overflow: hidden; }
+
+/* 들어가는 단추 */
+#novelActs:empty { display: none; }
+.novel-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 1.1rem; }
+.btn-novel {
+  display: inline-flex; align-items: center; gap: 0.7rem; padding: 0.5rem 1.1rem 0.5rem 0.55rem; cursor: pointer; text-align: left;
+  border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.btn-novel:hover { filter: brightness(1.08); }
+.btn-novel b { display: block; font-size: 0.95rem; line-height: 1.25; }
+.btn-novel small { display: block; font-size: 0.74rem; opacity: 0.85; line-height: 1.25; }
+.nv-play { width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent-ink) 18%, transparent); font-size: 0.8rem; padding-left: 2px; }
+.btn-novel-sub { border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); border-radius: 999px; padding: 0.45rem 0.95rem; font-size: 0.85rem; cursor: pointer; }
+.btn-novel-sub:hover { border-color: var(--muted); color: var(--ink); }
+.chip.chip-novel { flex: none; text-decoration: none; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); font-weight: 600; }
+.chip.chip-novel:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+body.editing .chip-novel, body.editing #novelActs { display: none; }
+
+/* 바탕 */
+.nv {
+  position: fixed; inset: 0; z-index: 60; outline: none; overflow: hidden;
+  display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr);
+  color: var(--ink); --nv-fs: 1.08rem;
+  background:
+    linear-gradient(to top, var(--nv-floor), transparent 32%),
+    radial-gradient(120% 85% at 50% 0%, var(--nv-top) 0%, var(--nv-mid) 58%, var(--nv-low) 100%);
+  background-color: var(--nv-mid);
+}
+.nv[data-size="s"] { --nv-fs: 0.98rem; }
+.nv[data-size="l"] { --nv-fs: 1.22rem; }
+
+.nv-btn {
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--ink-soft);
+  border-radius: 8px; padding: 0.3rem 0.75rem; font-size: 0.84rem; cursor: pointer; white-space: nowrap;
+}
+.nv-btn:hover { color: var(--ink); border-color: var(--muted); }
+.nv-btn[aria-pressed="true"], .nv-btn[aria-expanded="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.nv-btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* 위쪽 줄 */
+.nv-bar {
+  grid-row: 1; position: relative; z-index: 6;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.75rem;
+  padding: calc(env(safe-area-inset-top, 0px) + 0.55rem) max(16px, env(safe-area-inset-right, 0px)) 0.7rem max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.nv-where { min-width: 0; display: flex; align-items: baseline; gap: 0.6rem; overflow: hidden; white-space: nowrap; font-size: 0.86rem; color: var(--ink-soft); }
+.nv-where b { font-family: var(--font-display); font-size: 1rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.nv-where span { flex: none; }
+.nv-where span + span::before { content: "·"; margin-right: 0.6rem; color: var(--muted); }
+#nvScene { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--brass); }
+.nv-bar-acts { display: flex; gap: 0.35rem; }
+/* 읽는 위치 막대: 위쪽 줄 아래 가장자리 */
+.nv-seek {
+  position: absolute; left: 0; right: 0; bottom: -7px; width: 100%; height: 14px; margin: 0; background: transparent; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+}
+.nv-seek::-webkit-slider-runnable-track { height: 3px; background: linear-gradient(to right, var(--accent) var(--p, 0%), color-mix(in srgb, var(--line) 80%, transparent) var(--p, 0%)); }
+.nv-seek::-moz-range-track { height: 3px; background: linear-gradient(to right, var(--accent) var(--p, 0%), color-mix(in srgb, var(--line) 80%, transparent) var(--p, 0%)); }
+.nv-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; margin-top: -4px; border-radius: 50%; background: var(--accent); border: 0; opacity: 0; transition: opacity .15s; }
+.nv-seek::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); border: 0; opacity: 0; }
+.nv-seek:hover::-webkit-slider-thumb, .nv-seek:focus-visible::-webkit-slider-thumb { opacity: 1; }
+.nv-seek:hover::-moz-range-thumb, .nv-seek:focus-visible::-moz-range-thumb { opacity: 1; }
+.nv-seek:focus-visible { outline: none; }
+.nv-seek:focus-visible::-webkit-slider-runnable-track { height: 5px; }
+
+/* 무대 */
+.nv-stage {
+  grid-row: 2; grid-column: 1; position: relative; min-height: 0;
+  display: flex; flex-direction: column; cursor: pointer; user-select: none; -webkit-user-select: none;
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) max(14px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.nv-glow {
+  position: absolute; left: var(--gx, 50%); bottom: 26%; width: 52vmin; height: 52vmin; transform: translateX(-50%);
+  border-radius: 50%; background: var(--c, transparent); filter: blur(72px); opacity: 0; pointer-events: none;
+  transition: opacity .6s ease, left .6s ease, background-color .6s ease;
+}
+.nv-glow.on { opacity: var(--nv-glow-op); }
+
+.nv-cast {
+  flex: 1; min-height: 0; display: flex; align-items: flex-end; justify-content: center;
+  gap: clamp(10px, 3.5vw, 48px); padding: 1.5rem 0 0.9rem; position: relative; z-index: 1;
+}
+.nv-sprite {
+  margin: 0; display: flex; flex-direction: column; align-items: center; transform-origin: 50% 100%;
+  opacity: 0.62; filter: saturate(0.55) brightness(0.88); transform: scale(0.93);
+  transition: opacity .35s ease, filter .35s ease, transform .35s ease;
+}
+.nv-cast:not(.has-on) .nv-sprite { opacity: 0.82; filter: saturate(0.85); transform: scale(0.95); }
+.nv-sprite.on { opacity: 1; filter: none; transform: translateY(-6px) scale(1); }
+.nv-frame {
+  position: relative; height: clamp(150px, 40vh, 330px); aspect-ratio: 5 / 7; border-radius: 16px 16px 10px 10px; overflow: hidden;
+  display: grid; place-items: center;
+  background: linear-gradient(165deg, color-mix(in srgb, var(--c, #888) 78%, #fff 22%) 0%, var(--c, #888) 45%, color-mix(in srgb, var(--c, #888) 62%, #000 38%) 100%);
+  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.1), inset 0 0 0 6px color-mix(in srgb, var(--brass) 55%, transparent), 0 18px 34px -16px rgba(0, 0, 0, 0.55);
+}
+.nv-frame::after { content: ""; position: absolute; inset: 12px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 10px 10px 6px 6px; pointer-events: none; }
+.has-img .nv-frame::after { display: none; }
+.nv-initial { font-family: var(--font-display); font-weight: 700; font-size: clamp(2.6rem, 6vw, 4.6rem); color: var(--con, #fff); opacity: 0.92; line-height: 1; }
+.nv-frame img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; display: block; }
+.nv-sprite figcaption { margin-top: 0.5rem; font-size: 0.78rem; color: var(--ink-soft); letter-spacing: 0.02em; white-space: nowrap; }
+.nv-sprite.on figcaption { color: var(--ink); font-weight: 600; }
+
+/* 대사 상자 */
+.nv-box {
+  position: relative; z-index: 2; width: min(100%, 52rem); margin: 0 auto; cursor: pointer;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); border-radius: 14px;
+  padding: 1.5rem 1.6rem 1.35rem; min-height: calc(var(--nv-fs) * 1.85 * 3 + 2.85rem);
+  box-shadow: 0 14px 40px -16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.nv-name {
+  position: absolute; top: 0; left: 1.1rem; transform: translateY(-55%);
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.22rem 0.9rem; border-radius: 8px;
+  background: var(--c, var(--ink)); color: var(--con, var(--bg)); box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.4);
+  font-size: 0.95rem;
+}
+.nv-name:empty { display: none; }
+.nv-name b { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.01em; }
+.nv-role { font-size: 0.72rem; opacity: 0.85; font-weight: 500; }
+.nv-text { font-size: var(--nv-fs); line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 34vh; overflow-y: auto; cursor: text; user-select: text; -webkit-user-select: text; }
+.nv-text .whole.act { font-size: 0.95em; }
+.nv-foot { position: absolute; right: 1rem; bottom: 0.45rem; display: flex; align-items: center; gap: 0.6rem; font-size: 0.72rem; color: var(--muted); }
+.nv-page { font-family: var(--font-mono); }
+.nv-more { color: var(--accent); animation: nvBob 1.1s ease-in-out infinite; }
+.nv.is-typing .nv-more { visibility: hidden; }
+@keyframes nvBob { 50% { transform: translateY(3px); opacity: 0.55; } }
+
+.nv-box[data-kind="narration"] { background: color-mix(in srgb, var(--narr-bg) 96%, transparent); border-color: var(--narr-line); }
+.nv-box[data-kind="narration"] .nv-name { background: var(--narr-bg); color: var(--brass); border: 1px solid var(--narr-line); box-shadow: none; }
+.nv-box[data-kind="narration"] .nv-text { font-family: var(--font-display); }
+.nv-box[data-kind="chat"] { background: color-mix(in srgb, var(--tint) 95%, transparent); width: min(100%, 44rem); }
+.nv-box[data-kind="chat"] .nv-name { background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line); box-shadow: none; font-size: 0.85rem; }
+.nv-box[data-kind="chat"] .nv-name b { font-family: var(--font-body); font-weight: 600; }
+.nv-box[data-kind="chat"] .nv-text { font-size: calc(var(--nv-fs) * 0.92); color: var(--ink-soft); }
+.nv-box[data-kind="dice"] { min-height: 0; padding-top: 1.6rem; }
+.nv-box[data-kind="dice"] .nv-name { background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }
+.nv-box[data-kind="dice"] .nv-name b { color: var(--cl, var(--ink)); }
+.nv-dice { max-width: 34rem; margin: 0 auto; font-size: 1rem; }
+.nv-dice .dice-top { display: none; }
+
+.nv-ctrl { position: relative; z-index: 2; display: flex; justify-content: center; gap: 0.4rem; margin-top: 0.7rem; }
+.nv-ctrl .nv-btn { min-width: 2.6rem; }
+.nv.is-auto #nvAuto::after { content: " 중"; }
+.nv-hint { position: absolute; left: 0; right: 0; top: 1rem; margin: 0; text-align: center; font-size: 0.8rem; color: var(--muted); pointer-events: none; z-index: 2; }
+
+/* 회차·장면 카드, 진행 표시 */
+.nv-card { position: absolute; left: 0; right: 0; top: 22%; z-index: 3; margin: 0 auto; width: min(92%, 34rem); text-align: center; cursor: pointer; }
+.nv-card h2 { margin: 0.35rem 0 0; font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem, 5vw, 2.9rem); line-height: 1.2; text-wrap: balance; }
+.nv-card-eyebrow { margin: 0; font-size: 0.78rem; letter-spacing: 0.16em; color: var(--brass); font-weight: 600; }
+.nv-card-sub { margin: 0.6rem 0 0; font-family: var(--font-mono); font-size: 0.9rem; color: var(--ink-soft); }
+.nv-card.is-scene h2 { font-size: clamp(1.6rem, 4.2vw, 2.4rem); }
+.nv-card.is-scene::before, .nv-card.is-scene::after { content: ""; display: block; height: 1px; margin: 0 auto; width: 60%; background: linear-gradient(to right, transparent, var(--brass), transparent); }
+.nv-card.is-scene::before { margin-bottom: 1.1rem; }
+.nv-card.is-scene::after { margin-top: 1.1rem; }
+.nv-orn { display: block; margin-top: 0.6rem; color: var(--brass); font-size: 0.9rem; }
+.nv-card-acts { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.4rem; }
+.nv-card-acts .nv-btn { padding: 0.45rem 1.1rem; font-size: 0.92rem; }
+.nv-sys {
+  position: absolute; left: 0; right: 0; top: 34%; z-index: 3; text-align: center; pointer-events: none;
+}
+.nv-sys span {
+  display: inline-block; max-width: min(90%, 36rem); padding: 0.45rem 1.6rem; font-family: var(--font-display); font-size: 1.15rem; color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 75%, transparent); border-block: 1px solid var(--brass);
+}
+
+.nv-in { animation: nvIn .5s ease both; }
+.nv-pop { animation: nvIn .35s ease both; }
+.nv-enter { animation: nvEnter .45s ease both; }
+@keyframes nvIn { from { opacity: 0; transform: translateY(8px); } }
+@keyframes nvEnter { from { opacity: 0; transform: translateY(16px) scale(0.92); } }
+
+/* 옆 창 */
+.nv-sheet {
+  grid-row: 2; grid-column: 1; justify-self: end; z-index: 7; width: min(26rem, 100%); height: 100%;
+  display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 40px -24px rgba(0, 0, 0, 0.45);
+}
+.nv-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 1rem 0.6rem; border-bottom: 1px solid var(--line); }
+.nv-sheet-head b { font-size: 0.95rem; }
+.nv-sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0.6rem 1rem max(1rem, env(safe-area-inset-bottom, 0px)); display: grid; align-content: start; gap: 0.75rem; }
+.nv-sheet-body .seg { flex-wrap: wrap; }
+.nv-scenes, .nv-log { list-style: none; margin: 0; padding: 0; }
+.nv-scenes li.is-sess { margin-top: 0.6rem; }
+.nv-scenes li.is-sess:first-child { margin-top: 0; }
+.nv-scenes button, .nv-log button {
+  width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer; border-radius: 6px; color: var(--ink-soft);
+}
+.nv-scenes button { padding: 0.3rem 0.6rem 0.3rem 1.3rem; font-size: 0.88rem; display: flex; gap: 0.6rem; align-items: baseline; }
+.nv-scenes li.is-sess button { padding-left: 0.6rem; color: var(--ink); }
+.nv-scenes .num { font-family: var(--font-mono); font-size: 0.76rem; color: var(--muted); }
+.nv-scenes button:hover, .nv-log button:hover { background: var(--tint); color: var(--ink); }
+.nv-scenes button[aria-current="true"], .nv-log button[aria-current="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+.nv-log button { padding: 0.4rem 0.6rem; font-size: 0.86rem; line-height: 1.55; display: block; }
+.nv-log b { display: block; font-size: 0.78rem; color: var(--cl, var(--ink)); }
+.nv-log .k-narration .nv-log-text { font-family: var(--font-display); }
+.nv-log .k-narration button { box-shadow: inset 2px 0 0 var(--narr-line); color: var(--ink-soft); }
+.nv-log .k-chat button { color: var(--muted); font-size: 0.8rem; }
+.nv-log .nv-log-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.nv-log .nv-log-text.sys { color: var(--muted); font-style: italic; }
+.nv-log-mark { display: block; text-align: center; font-size: 0.76rem; letter-spacing: 0.1em; color: var(--brass); font-weight: 600; padding-block: 0.2rem; }
+.nv-log-more { font-size: 0.74rem; color: var(--muted); text-align: center; padding: 0.3rem 0 0.6rem; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nv-log b, :root:not([data-theme="light"]) .nv-box[data-kind="dice"] .nv-name b { color: var(--cd, var(--ink)); }
+}
+:root[data-theme="dark"] .nv-log b, :root[data-theme="dark"] .nv-box[data-kind="dice"] .nv-name b { color: var(--cd, var(--ink)); }
+
+/* 폰: 말하는 사람만 무대에, 위쪽 줄은 짧게 */
+@media (max-width: 720px) {
+  .nv { --nv-fs: 1rem; }
+  .nv[data-size="s"] { --nv-fs: 0.92rem; }
+  .nv[data-size="l"] { --nv-fs: 1.12rem; }
+  .nv-bar { gap: 0.5rem; grid-template-columns: auto minmax(0, 1fr); }
+  .nv-bar-acts { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
+  .nv-where b { display: none; }
+  .nv-where span + span::before { margin-right: 0.4rem; }
+  .nv-btn { padding: 0.28rem 0.6rem; font-size: 0.8rem; }
+  .nv-sprite:not(.on) { display: none; }
+  .nv-frame { height: clamp(120px, 28vh, 220px); }
+  .nv-box { padding: 1.35rem 1.05rem 1.3rem; }
+  .nv-text { max-height: 38vh; }
+  .nv-sheet { width: 100%; border-left: 0; }
+  .nv-card { top: 16%; }
+}
+@media (max-width: 720px) and (max-height: 560px), (max-height: 460px) {
+  .nv-cast { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nv-sprite, .nv-glow { transition: none; }
+  .nv-more { animation: none; }
+}
+.imp-detail { margin: 0.4rem 0 0; display: grid; gap: 0.15rem; font-size: 0.76rem; color: var(--muted); font-family: var(--font-mono); overflow-wrap: anywhere; user-select: all; }

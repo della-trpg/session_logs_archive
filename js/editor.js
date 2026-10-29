@@ -470,7 +470,7 @@
     if (!t || r.classList.contains('is-editing')) return;
     r.classList.add('is-editing');
     const box = el('div', 'er-edit');
-    const ta = el('textarea'); ta.value = e.text || ''; ta.id = 'edit-' + e.id; ta.setAttribute('aria-label', '글 고치기');
+    const ta = el('textarea'); ta.value = e.text || ''; ta.id = 'edit-' + e.id; ta.setAttribute('aria-label', '글 고치기'); ta.maxLength = 5000;
     ta.rows = Math.min(8, Math.max(1, (e.text || '').split('\n').length));
     const acts = el('div', 'er-edit-acts');
     const save = el('button', 'btn-sm primary', '저장'); save.type = 'button';

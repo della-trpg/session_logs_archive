@@ -172,6 +172,8 @@
       btn.addEventListener('click', () => setFocus(S.focus === s.id ? null : s.id));
       li.append(btn); cast.append(li);
     });
+    const na = $('novelActs');
+    if (na && SL.novel) na.replaceChildren(SL.novel.headActions());
   }
 
   function avatar(s) {
@@ -382,9 +384,11 @@
     const g = el('div', 'g ' + cls);
     g.dataset.first = first.id;
     const tools = el('div', 'g-tools');
+    const nv = el('button', null, '▶ 여기부터'); nv.type = 'button'; nv.title = '여기서부터 노벨로 보기';
+    nv.addEventListener('click', () => SL.novel.start(first.id));
     const b = el('button', null, '링크'); b.type = 'button'; b.title = '이 부분 링크 복사';
     b.addEventListener('click', () => copyLink(first.id));
-    tools.append(b); g.append(tools);
+    tools.append(nv, b); g.append(tools);
     return g;
   }
   function timeEl(e) {
@@ -771,6 +775,19 @@
     render();
     if (want != null && S.view === 'all') requestAnimationFrame(() => scrollToId('s' + want));
   }
+  // 주소의 # 이 바뀔 때: #n… = 노벨 보기, 노벨이 열려 있는데 다른 주소가 되면(뒤로 가기) 노벨만 닫기
+  const NOVEL_HASH = /^n(?:-(e\d+))?$/;
+  function onHash() {
+    const m = decodeURIComponent(location.hash.slice(1)).match(NOVEL_HASH);
+    if (m) { SL.novel.openAt(m[1] || null); return; }
+    if (SL.novel && SL.novel.open) { SL.novel.close(); return; }
+    route();
+  }
+  // 노벨에서 돌아올 때: 그 줄(또는 회차 머리)로
+  function goTo(id) {
+    if (/^s\d+$/.test(id)) { goSession(Number(id.slice(1))); return; }
+    if (!openEntry(id)) render(true);
+  }
   function copyLink(id) {
     const url = location.href.split('#')[0] + '#' + id;
     const fallback = () => { history.replaceState(null, '', '#' + id); toast('주소창의 링크를 복사해 주세요'); };
@@ -853,7 +870,8 @@
       const open = $('toolbar').classList.toggle('is-open');
       $('toolToggle').setAttribute('aria-expanded', String(open));
     });
-    window.addEventListener('hashchange', route);
+    window.addEventListener('hashchange', onHash);
+    $('novelOpen').addEventListener('click', () => { const a = topVisibleEntry(); SL.novel.start(a && /^e\d+$/.test(a.id) ? a.id : null); });
     window.addEventListener('scroll', spyScene, { passive: true });
     // 고정된 상단바·도구줄 높이를 CSS에 알려 줌 (목차 위치, 링크로 이동할 때 멈출 자리)
     const bars = new ResizeObserver(() => {
@@ -889,6 +907,8 @@
     renderHead();
     route();
     resolveImages();
+    const nm = decodeURIComponent(location.hash.slice(1)).match(NOVEL_HASH);
+    if (nm) SL.novel.openAt(nm[1] || null);
     if (SL.editor) SL.editor.ready();
   }
 
@@ -908,5 +928,5 @@
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
     diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
-    openBook, ctx: () => ctx, paint, updateBarBook };
+    openBook, ctx: () => ctx, paint, updateBarBook, goTo, openEntry, fmtPeriod };
 })();

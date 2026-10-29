@@ -26,12 +26,17 @@
     try { history.pushState(null, '', url); } catch (e) { /* 아티팩트 미리보기 등 */ }
     route();
   };
-  window.addEventListener('popstate', () => { params = new URLSearchParams(location.search); route(); });
+  // # 만 바뀐 뒤로·앞으로 가기(줄 링크, 노벨 보기)는 기록 화면이 알아서 처리. 기록을 다시 열지 않음
+  window.addEventListener('popstate', () => {
+    if (location.search === site.lastSearch && !$('bookPage').hidden) return;
+    params = new URLSearchParams(location.search); route();
+  });
 
   function showPage(which) {
     page.hidden = which !== 'page';
     $('bookPage').hidden = which !== 'book';
     if (which !== 'book') document.querySelector('.site-bar').classList.remove('show-book');
+    if (which !== 'book' && SL.novel && SL.novel.open) SL.novel.hide();
   }
   function loading(text) { showPage('page'); page.replaceChildren(el('div', 'loading', text || '불러오는 중…')); }
   function errorBox(text, retry) {
@@ -111,11 +116,12 @@
   let token = 0;
   async function route() {
     const my = ++token;
+    site.lastSearch = location.search;
     if (!site.api.user) return login();
     if (!site.profile || !site.profile.nickname) return nickname();
     if (params.has('code') || !site.worlds.length) return code();
     if (params.has('worlds')) return worldPicker();
-    const bookId = params.get('b') || (site.api.demo && /^#(e|s)\d+$/.test(location.hash) ? 'demo' : null);
+    const bookId = params.get('b') || (site.api.demo && /^#(e\d+|s\d+|n|n-e\d+)$/.test(location.hash) ? 'demo' : null);
     if (bookId) return openBook(bookId, my);
     if (params.has('import')) {
       if (!site.profile.isAdmin) { site.nav(''); return; }

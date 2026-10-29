@@ -9,15 +9,59 @@
   const CFG = g.SL_CONFIG || {};
   const SUPABASE_ESM = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 
+  // 서버(Postgres) 오류 → 읽을 수 있는 말. 모르는 오류는 원문을 detail로 같이 보여 줌
+  const KNOWN = [
+    [/log_entries_text_check/, '5000자가 넘는 줄이 있어요.'],
+    [/log_entries_dice_check/, '주사위 카드 내용이 너무 길어요.'],
+    [/log_entries_ts_check/, '시각 형식이 맞지 않는 줄이 있어요.'],
+    [/log_entries_src_check/, '메시지 ID가 너무 긴 줄이 있어요.'],
+    [/log_speakers_name_check/, '인물 이름은 1~40자여야 해요.'],
+    [/log_speakers_image_path_check/, 'NPC 이미지 경로 모양이 맞지 않아요. (예: ARCANA/NPC_01.webp)'],
+    [/log_speakers_color_check/, '인물 색 값이 맞지 않아요.'],
+    [/log_books_title_check/, '제목은 1~60자여야 해요.'],
+    [/log_books_system_check/, '시스템 이름은 30자까지예요.'],
+    [/log_books_gm_check/, 'GM 이름은 40자까지예요.'],
+    [/log_sessions_title_check/, '회차 이름은 40자까지예요.'],
+    [/statement timeout|canceling statement/i, '서버 처리 시간이 넘었어요. 다시 시도해 주세요.'],
+    [/Could not find the function|schema cache/i, '서버 SQL이 최신이 아니에요. session_log_setup.sql을 SQL Editor에서 다시 실행해 주세요.'],
+    [/unsupported Unicode|\\u0000|invalid byte sequence/i, '저장할 수 없는 글자가 섞여 있어요.'],
+    [/payload too large|request entity too large|\b413\b/i, '한 번에 보내는 양이 너무 커요.'],
+    [/violates check constraint/i, '서버 규칙에 맞지 않는 값이 있어요.'],
+  ];
   function friendly(err) {
     const msg = String((err && err.message) || err || '');
+    for (const [re, text] of KNOWN) if (re.test(msg)) return text;
     if (/row-level security|permission denied|42501/i.test(msg) && !/[가-힣]/.test(msg)) return '권한이 없어요.';
-    if (/JWT|token|session/i.test(msg)) return '로그인이 만료됐어요. 다시 로그인해 주세요.';
+    if (/JWT|invalid token|refresh token|not authenticated/i.test(msg)) return '로그인이 만료됐어요. 다시 로그인해 주세요.';
     if (/Failed to fetch|NetworkError|network/i.test(msg)) return '서버에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.';
     if (/[가-힣]/.test(msg)) return msg.replace(/^.*?:\s*(?=[가-힣])/, '');
     return '문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.';
   }
-  class ApiError extends Error { constructor(raw) { super(friendly(raw)); this.raw = raw; } }
+  class ApiError extends Error {
+    constructor(raw) {
+      super(friendly(raw));
+      this.raw = raw;
+      // 원문 (오류 신고용): 코드 · 메시지 · 자세히 · 힌트
+      if (raw && typeof raw === 'object') this.detail = [raw.code, raw.message, raw.details, raw.hint].filter(Boolean).join(' / ');
+      this.network = /Failed to fetch|NetworkError|network/i.test(String((raw && raw.message) || raw || ''));
+    }
+  }
+
+  // 보내기 전 마지막 안전망: 서버 표의 글자 수 한도에 맞추고, 저장 못 하는 글자(NUL) 빼기
+  const clean = (s, n) => (typeof s === 'string' ? s.replace(/\u0000/g, '').slice(0, n) : s);
+  function fitPayload(p) {
+    const q = Object.assign({}, p);
+    if (q.entries) q.entries = q.entries.map((e) => Object.assign({}, e, { text: clean(e.text || '', 5000), src: clean(e.src, 40), orig: clean(e.orig, 5000) }));
+    if (q.speakers) q.speakers = q.speakers.map((s) => Object.assign({}, s, { name: clean(s.name, 40) || '?', charId: clean(s.charId, 40) }));
+    if (q.sessions) q.sessions = q.sessions.map((s) => Object.assign({}, s, { title: clean(s.title, 40) }));
+    if (q.book) q.book = fitBook(q.book);
+    return q;
+  }
+  function fitBook(b) {
+    const o = Object.assign({}, b);
+    ['title', 'system', 'gm'].forEach((k, i) => { if (k in o) o[k] = clean(o[k], [60, 30, 40][i]); });
+    return o;
+  }
   const lsGet = (k) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } };
 
@@ -176,11 +220,11 @@
       return out;
     }
     async apply(bookId, payload) {
-      const { error } = await this.sb.rpc('log_apply', { p_book: bookId, p: payload });
+      const { error } = await this.sb.rpc('log_apply', { p_book: bookId, p: fitPayload(payload) });
       if (error) throw new ApiError(error);
     }
     async createBook(world, book) {
-      const { data, error } = await this.sb.rpc('log_create_book', { p_world: world, p_book: book });
+      const { data, error } = await this.sb.rpc('log_create_book', { p_world: world, p_book: fitBook(book) });
       if (error) throw new ApiError(error);
       return data;
     }

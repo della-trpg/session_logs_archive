@@ -9,7 +9,7 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const ROLES = [['pc', 'PC'], ['npc', 'NPC'], ['gm', 'GM'], ['pl', '플레이어']];
   const KIND_LABEL = { dialogue: '대사', narration: '나레이션', chat: '사담', dice: '주사위', system: '진행', scene: '장면', meta: '회차 카드', whisper: '귓속말' };
-  const CHUNK = 1000;
+  const CHUNK = 500;   // 한 번에 보내는 줄 수 (서버 처리 시간 여유)
 
   SL.importPage = function (root, ctx) {
     const st = { raw: null, cfg: null, world: ctx.world.id, prep: true, unknown: true, chars: [], book: null };
@@ -132,8 +132,9 @@
       st.pvBox = el('div', 'imp-preview'); pv.append(st.pvBox);
       const save = el('button', 'btn primary', '초안으로 저장'); save.type = 'button'; save.id = 'impSave';
       st.progress = el('p', 'muted small'); st.progress.setAttribute('role', 'status');
+      st.detail = el('p', 'imp-detail'); st.detail.hidden = true;
       save.addEventListener('click', () => doSave(save));
-      pv.append(save, st.progress);
+      pv.append(save, st.progress, st.detail);
       body.append(pv);
       preview();
     }
@@ -200,6 +201,8 @@
       btn.disabled = true;
       const b = resume ? resume.book : build();
       const say = (t) => { st.progress.textContent = t; };
+      st.detail.hidden = true; st.detail.replaceChildren();
+      let step = '기록 만들기';
       try {
         let id = resume && resume.id;
         let from = resume ? resume.from : 0;
@@ -209,13 +212,22 @@
           resume = { id, book: b, from: 0, headDone: false };
         }
         if (!resume.headDone) {
+          step = '회차·인물 저장';
           await ctx.api.apply(id, { sessions: b.sessions.map((s) => ({ no: s.no, title: s.title, date: s.date })), speakers: b.speakers });
           resume.headDone = true;
         }
         for (; from < b.entries.length; from += CHUNK) {
           resume.from = from;
-          say(`줄 저장 중… ${Math.min(from + CHUNK, b.entries.length).toLocaleString()} / ${b.entries.length.toLocaleString()}`);
-          await ctx.api.apply(id, { entries: b.entries.slice(from, from + CHUNK) });
+          const to = Math.min(from + CHUNK, b.entries.length);
+          step = `줄 ${(from + 1).toLocaleString()}~${to.toLocaleString()} 저장`;
+          say(`줄 저장 중… ${to.toLocaleString()} / ${b.entries.length.toLocaleString()}`);
+          try {
+            await ctx.api.apply(id, { entries: b.entries.slice(from, to) });
+          } catch (e) {
+            // 연결·로그인 문제가 아니면 어느 줄에서 막히는지 좁혀서 알려 줌 (앞쪽 성공한 줄은 저장됨)
+            if (!e.network && !/로그인/.test(e.message)) e.badAt = await findBad(id, b, from, to, say);
+            throw e;
+          }
         }
         if (ctx.api.demo) await ctx.api.saveImported(id, b);
         resume = null;
@@ -225,8 +237,31 @@
       } catch (e) {
         btn.disabled = false;
         btn.textContent = resume ? '이어서 다시 저장' : '초안으로 저장';
-        say(`저장하지 못했어요: ${e.message}${resume ? ' — 버튼을 누르면 멈춘 곳부터 이어서 저장해요.' : ''}`);
+        say(`저장하지 못했어요 (${step}): ${e.message}${resume ? ' — 버튼을 누르면 멈춘 곳부터 이어서 저장해요.' : ''}`);
+        // 오류 신고용 자세한 내용
+        const lines = [];
+        if (e.badAt != null) {
+          const x = b.entries[e.badAt];
+          const who = x.speaker ? (b.speakers.find((s) => s.id === x.speaker) || {}).name : null;
+          lines.push(`막힌 줄: ${(e.badAt + 1).toLocaleString()}번째 · ${who || x.kind} · 글자 ${String(x.text || '').length.toLocaleString()}자${x.dice ? ' · 주사위 카드' : ''}`);
+          lines.push(`내용 앞부분: ${String(x.text || (x.dice && (x.dice.title || x.dice.text)) || '').slice(0, 60)}`);
+        }
+        if (e.detail) lines.push(`서버 원문: ${e.detail}`);
+        if (lines.length) {
+          lines.forEach((t) => st.detail.append(el('span', null, t)));
+          st.detail.hidden = false;
+        }
       }
+    }
+    // 실패한 묶음을 반씩 나눠 보내며 처음 막히는 줄 찾기 (최대 10번쯤)
+    async function findBad(id, b, from, to, say) {
+      let lo = from; let hi = to;
+      say('막힌 줄을 찾는 중…');
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        try { await ctx.api.apply(id, { entries: b.entries.slice(lo, mid) }); lo = mid; } catch (e) { hi = mid; }
+      }
+      try { await ctx.api.apply(id, { entries: [b.entries[lo]] }); return null; } catch (e) { return lo; }
     }
   };
 })();

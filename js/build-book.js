@@ -28,6 +28,38 @@
 
   const pad = (n) => String(n).padStart(2, '0');
 
+  const MAX_TEXT = 4800;        // 서버 한도 5000자보다 조금 작게
+  const MAX_DICE_BYTES = 6000;  // 서버 한도 8000바이트보다 작게
+  // 긴 글 → MAX_TEXT 안쪽 조각들 (줄바꿈 > 문장 끝 > 띄어쓰기 > 그냥 자르기 순으로 자리 찾기)
+  function splitText(t) {
+    const out = [];
+    let rest = t;
+    while (rest.length > MAX_TEXT) {
+      const head = rest.slice(0, MAX_TEXT);
+      let cut = head.lastIndexOf('\n');
+      if (cut < MAX_TEXT * 0.5) { const m = head.match(/^[\s\S]*[.!?。…~](?=\s)/); cut = m && m[0].length > MAX_TEXT * 0.5 ? m[0].length : -1; }
+      if (cut < MAX_TEXT * 0.5) cut = head.lastIndexOf(' ');
+      if (cut < MAX_TEXT * 0.5) cut = MAX_TEXT;
+      // 이모지 같은 두 칸짜리 글자를 반으로 자르지 않게
+      const c = rest.charCodeAt(cut - 1); if (c >= 0xd800 && c <= 0xdbff) cut--;
+      out.push(rest.slice(0, cut).trim());
+      rest = rest.slice(cut).replace(/^\s+/, '');
+    }
+    if (rest) out.push(rest);
+    return out.filter(Boolean);
+  }
+  const bytes = (o) => new TextEncoder().encode(JSON.stringify(o)).length;
+  // 주사위 카드가 너무 크면 긴 글 칸(표·효과·기타 양식 글)부터 줄임
+  function fitDice(d) {
+    for (let guard = 0; guard < 20 && bytes(d) > MAX_DICE_BYTES; guard++) {
+      const k = ['text', 'effect', 'tableText', 'info'].filter((x) => typeof d[x] === 'string' && d[x].length > 20)
+        .sort((a, b) => d[b].length - d[a].length)[0];
+      if (!k) { ['dice', 'sides', 'rolls'].forEach((x) => { if (Array.isArray(d[x]) && d[x].length > 60) d[x] = d[x].slice(0, 60); }); break; }
+      d[k] = d[k].slice(0, Math.floor(d[k].length * 0.6)) + '…';
+    }
+    return d;
+  }
+
   function buildBook(raw, cfg) {
     cfg = cfg || {};
     const scfg = cfg.speakers || {};
@@ -112,6 +144,18 @@
       if ((e.kind === 'narration' || e.kind === 'system') && SCENE_LINES.some((r) => r.test(e.text.trim()))) e.kind = 'scene';
     });
 
+    // 서버 한도(한 줄 5000자, 주사위 카드 8000바이트)에 맞추기: 긴 글은 문단·문장에서 여러 줄로 나눔
+    const fitted = [];
+    entries.forEach((e) => {
+      if (e.dice) fitDice(e.dice);
+      if (e.text && e.text.length > MAX_TEXT) splitText(e.text).forEach((part) => fitted.push(Object.assign({}, e, { text: part })));
+      else fitted.push(e);
+    });
+    if (fitted.length !== entries.length) {
+      fitted.forEach((e, i) => { e.id = 'e' + (i + 1); e.seq = (i + 1) * 1000; });
+      entries.length = 0; entries.push(...fitted);
+    }
+
     const dates = sessions.filter((s) => s.date).map((s) => s.date);
     const book = {
       title: title || '제목 없는 기록',
@@ -130,4 +174,5 @@
 
   g.SL = g.SL || {};
   g.SL.buildBook = buildBook;
+  g.SL._fit = { splitText, fitDice, MAX_TEXT };
 })(typeof window !== 'undefined' ? window : globalThis);

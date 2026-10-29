@@ -38,6 +38,7 @@
     <p class="eyebrow" id="bookSystem">세션 기록</p>
     <h1 id="bookTitle">불러오는 중…</h1>
     <p class="book-meta" id="bookMeta"></p>
+    <div id="novelActs"></div>
     <ul class="cast" id="cast" aria-label="등장인물"></ul>
   </div>
 </header>
@@ -46,6 +47,7 @@
   <div class="wrap toolbar-in">
     <div class="tab-row">
       <div class="session-tabs" id="sessionTabs" role="tablist" aria-label="회차"></div>
+      <button type="button" class="chip chip-novel" id="novelOpen" title="지금 보던 곳부터 노벨로 보기">▶ 노벨로</button>
       <button type="button" class="chip tool-toggle" id="toolToggle" aria-expanded="false" aria-controls="toolRow">보기·찾기</button>
     </div>
     <div class="tool-row" id="toolRow">
@@ -138,6 +140,7 @@
 <script src="js/store.js"></script>
 <script src="js/app.js"></script>
 <script src="js/editor.js"></script>
+<script src="js/novel.js"></script>
 <script src="js/import.js"></script>
 <script src="js/site.js"></script>
 </body>
