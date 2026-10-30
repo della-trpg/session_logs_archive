@@ -957,3 +957,5 @@ body.editing .chip-novel, body.editing #novelActs { display: none; }
 .person.just-changed { animation: personFlash 1.4s ease; border-radius: 8px; }
 @keyframes personFlash { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .person.just-changed { animation: none; } }
+.img-dice select { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.25rem 0.4rem; font-size: 0.85rem; }
+#ask { z-index: 55; }   /* 다른 창 위에 */

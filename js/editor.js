@@ -855,6 +855,7 @@
   window.addEventListener('touchmove', userScroll, { passive: true });
 
   // ── 작은 입력 창 (prompt 대신) ───────────
+  let askCancelFn = null;
   function ask(o) {
     const back = $('ask'); const form = $('askForm');
     $('askTitle').textContent = o.title; $('askNote').textContent = o.note || '';
@@ -883,7 +884,8 @@
       b.addEventListener('click', () => { back.hidden = true; x.run(); });
       $('askCancel').before(b);
     });
-    form.onsubmit = (ev) => { ev.preventDefault(); back.hidden = true; o.run(inputs.map((i) => i.value)); };
+    form.onsubmit = (ev) => { ev.preventDefault(); askCancelFn = null; back.hidden = true; o.run(inputs.map((i) => i.value)); };
+    askCancelFn = o.cancel || null;
     back.hidden = false;
     (inputs[0] || $('askOk')).focus();
   }
@@ -892,16 +894,20 @@
   // 이미 가져와서 고치던 기록에 새 가져오기 규칙(이름 빠진 사담 → 알 수 없음, 내보낸 사람 줄 확정)을 소급 적용.
   // 줄은 Roll20 메시지 ID(src)로 짝을 맞추고, 예전 규칙과 새 규칙의 결과가 다른 줄만,
   // 그리고 말한 사람을 직접 고치지 않은 줄(지금 값 = 예전 규칙 결과)만 바꿈.
-  function reapplyRules() {
+  let reapplyFromImages = false;
+  function reapplyRules(fromImages) {
+    reapplyFromImages = fromImages === true;
     const input = el('input'); input.type = 'file'; input.accept = '.html,.htm,text/html';
+    input.addEventListener('cancel', backToImages);   // 파일 고르기를 취소하면 그림 목록으로
     input.addEventListener('change', () => {
-      const f = input.files[0]; if (!f) return;
+      const f = input.files[0]; if (!f) { backToImages(); return; }
       const r = new FileReader();
-      r.onload = () => { try { planReapply(String(r.result)); } catch (e) { A.toast(e.message || '원본 로그를 읽지 못했어요'); } };
+      r.onload = () => { try { planReapply(String(r.result)); } catch (e) { A.toast(e.message || '원본 로그를 읽지 못했어요'); backToImages(); } };
       r.readAsText(f, 'utf-8');
     });
     input.click();
   }
+  function backToImages() { if (reapplyFromImages) { reapplyFromImages = false; openImages(); } }
   E.planReapply = planReapply;
   function planReapply(html) {
     const raw = SL.parseRoll20(html);
@@ -950,10 +956,11 @@
     });
     if (!withSrc.length || matched < withSrc.length * 0.5) {
       A.toast('이 기록을 가져온 원본 로그가 아닌 것 같아요. 같은 Roll20 파일을 골라 주세요.');
+      backToImages();
       return;
     }
     const list = Array.from(changes.values());
-    if (!list.length) { A.toast(kept ? `바꿀 줄이 없어요 (직접 고친 ${kept}줄은 그대로)` : '이미 원본과 맞아요. 바꿀 줄이 없어요.'); return; }
+    if (!list.length) { A.toast(kept ? `바꿀 줄이 없어요 (직접 고친 ${kept}줄은 그대로)` : '이미 원본과 맞아요. 바꿀 줄이 없어요.'); backToImages(); return; }
     const parts = [];
     if (nSpk) parts.push(`말한 사람 ${nSpk.toLocaleString()}줄 (이름이 빠진 사담 → 알 수 없음 등)`);
     if (nText) parts.push(`글 정리 ${nText.toLocaleString()}줄 (군더더기 글자 빼기, 굵게·기울임 살리기 — 직접 고친 적 없는 줄만)`);
@@ -962,10 +969,11 @@
       title: '원본 로그로 다시 맞추기',
       note: parts.join(' · ') + '이 바뀌어요.' + (kept ? ` 말한 사람을 직접 고친 ${kept.toLocaleString()}줄은 그대로 둬요.` : '') + ' 적용한 뒤 되돌리기로 한 번에 취소할 수 있어요.',
       fields: [], ok: `${list.length.toLocaleString()}줄 적용`,
+      cancel: backToImages,
       run: () => {
         store.commit(`원본 로그로 다시 맞추기 (${list.length}줄)`, { entries: list });
         A.toast(`${list.length.toLocaleString()}줄을 원본에 맞췄어요`, { label: '되돌리기', run: () => store.undo() });
-        const im = $('imgs'); if (im && !im.hidden) openImages();
+        backToImages();
       },
     });
   }
@@ -1000,7 +1008,7 @@
       const box = el('div', 'img-missing');
       box.append(el('p', null, `주소를 모르는 '(그림)'이 ${missing.toLocaleString()}개 있어요. 예전에 가져온 기록이면 원본 Roll20 로그를 다시 골라 주소를 찾을 수 있어요.`));
       const b = el('button', 'btn-sm', '원본 로그에서 그림 주소 찾기…'); b.type = 'button';
-      b.addEventListener('click', reapplyRules);
+      b.addEventListener('click', () => { $('imgs').hidden = true; reapplyRules(true); });   // 그림 목록은 닫고, 끝나면 다시 열림
       box.append(b); body.append(box);
     }
     groups.forEach((g, gi) => body.append(imageRow(g, gi)));
@@ -1049,7 +1057,22 @@
     const ok = el('button', 'btn-sm primary', '글로 바꾸기'); ok.type = 'submit';
     form.append(inp, ok);
     form.addEventListener('submit', (ev) => { ev.preventDefault(); const v = inp.value.trim(); if (!v) { inp.focus(); return; } replaceImage(g, v); });
-    info.append(where, ctx, form);
+    // 주사위 그림이면: 눈을 적어 주사위로 (그림만 있는 줄은 주사위 카드로, 글 사이에 있으면 주사위 눈 글자로)
+    const dform = el('form', 'img-form img-dice');
+    const dv = el('input'); dv.id = 'imgDice-' + gi; dv.placeholder = '주사위 눈 (예: 3 또는 2 5)'; dv.inputMode = 'numeric'; dv.maxLength = 60;
+    dv.setAttribute('aria-label', '주사위 눈');
+    const ds = el('select'); ds.id = 'imgSides-' + gi; ds.setAttribute('aria-label', '주사위 면 수');
+    [4, 6, 8, 10, 12, 20, 100].forEach((n) => { const o = el('option', null, 'd' + n); o.value = String(n); o.selected = n === 6; ds.append(o); });
+    const dok = el('button', 'btn-sm', '주사위로 바꾸기'); dok.type = 'submit';
+    dform.append(dv, ds, dok);
+    dform.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const sides = Number(ds.value);
+      const faces = dv.value.split(/[\s,，、+]+/).filter(Boolean).map(Number);
+      if (!faces.length || faces.some((n) => !Number.isInteger(n) || n < 1 || n > sides)) { A.toast(`1~${sides} 사이 숫자를 띄어쓰기로 적어 주세요`); dv.focus(); return; }
+      diceFromImage(g, faces, sides);
+    });
+    info.append(where, ctx, form, dform);
     const onlyImg = g.uses.filter(({ e }) => e.text.trim() === '(그림)');
     if (onlyImg.length) {
       const del = el('button', 'btn-sm danger', `그림만 있는 줄 ${onlyImg.length}개 휴지통으로`); del.type = 'button';
@@ -1063,6 +1086,37 @@
     }
     row.append(th, info);
     return row;
+  }
+  const DIE_CHAR = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+  function diceFromImage(g, faces, sides) {
+    const byE = new Map();
+    g.uses.forEach(({ e, k }) => { if (!byE.has(e.id)) byE.set(e.id, new Set()); byE.get(e.id).add(k); });
+    const inline = sides === 6 ? faces.map((n) => DIE_CHAR[n - 1]).join('') : `[d${sides}: ${faces.join(', ')}]`;
+    const sum = faces.reduce((a, b) => a + b, 0);
+    const ch = []; let cards = 0;
+    byE.forEach((ks, id) => {
+      const e = store.byId.get(id); const n = clone(e);
+      if (e.text.trim() === '(그림)' && (e.imgs || []).length === 1) {
+        // 그림만 있는 줄 → 주사위 카드 (말한 사람은 그대로)
+        n.kind = 'dice'; n.text = '';
+        n.dice = { template: 'manual', kind: 'roll', rolls: [`${faces.length}d${sides}`], dice: faces.slice(), sides: faces.map(() => sides), total: sum };
+        if (faces.length > 1) n.dice.sum = sum;
+        delete n.imgs;
+        if (n.orig == null && !n.created) n.orig = e.text;
+        cards++;
+      } else {
+        let occ = -1;
+        n.text = e.text.replace(/\(그림\)/g, (m0) => { occ++; return ks.has(occ) ? inline : m0; });
+        n.imgs = (e.imgs || []).filter((_, k) => !ks.has(k));
+        if (!n.imgs.length) delete n.imgs;
+        if (n.orig == null && !n.created) n.orig = e.text;
+      }
+      ch.push(n);
+    });
+    store.commit(`그림 → 주사위 (${ch.length}줄)`, { entries: ch });
+    A.toast(cards === ch.length ? `${ch.length}줄을 주사위 카드로 바꿨어요` : `${ch.length}줄을 바꿨어요 (주사위 카드 ${cards}줄, 글 사이 주사위 눈 ${ch.length - cards}줄)`,
+      { label: '되돌리기', run: () => { store.undo(); openImages(); } });
+    openImages();
   }
   function replaceImage(g, text) {
     const byE = new Map();
@@ -1114,7 +1168,7 @@
     $('bulkRestore').addEventListener('click', () => restore(selectedInOrder()));
     $('bulkClear').addEventListener('click', clearSel);
 
-    $('askCancel').addEventListener('click', () => { $('ask').hidden = true; });
+    $('askCancel').addEventListener('click', () => { $('ask').hidden = true; const f = askCancelFn; askCancelFn = null; if (f) f(); });
     $('ask').addEventListener('click', (ev) => { if (ev.target === $('ask')) $('ask').hidden = true; });
 
     document.addEventListener('keydown', (ev) => {
