@@ -771,7 +771,7 @@
     });
   }
   function speakerMenu(btn, ids) {
-    const sp = store.book.speakers;
+    const sp = A.orderedSpeakers();   // 머리말·인물 설정과 같은 순서
     const chars = sp.filter(isChar); const others = sp.filter((s) => !isChar(s));
     const mk = (s) => ({
       label: s ? s.name : '알 수 없음 / 없음', color: s && s.color, run: () => {
@@ -839,7 +839,7 @@
         { id: 'bi-lead', label: '목록의 대표 NPC', type: 'select', value: leadNow, options: leadOpts },
       ].concat(labelFields),
       ok: '저장',
-      extra: [{ label: '원본 로그로 다시 맞추기…', run: reapplyRules }],
+      extra: [{ label: '원본 로그로 다시 맞추기…', run: reapplyRules }, { label: '사담 로그 끼워 넣기…', run: () => SL.chatMerge.open() }],
       run: (v) => {
         const dl = {};
         const [vis, ...w] = v;
@@ -864,7 +864,16 @@
     ROLE_OPTS.forEach(([k, v]) => { const o = el('option', null, v); o.value = k; o.selected = cur === k; role.append(o); });
     role.title = '에너미: 금서·단장처럼 적으로 나오는 NPC. 기록 목록의 대표 NPC에서 빠져요.';
     role.addEventListener('change', () => changeRole(s, role.value));
-    box.append(name, role);
+    // 순서 ↑↓ (같은 무리 안에서) · 합치기·지우기
+    const up = el('button', 'btn-sm', '↑'); up.type = 'button'; up.title = '위로 (머리말·말한 사람 목록 순서)'; up.setAttribute('aria-label', `${s.name} 위로`);
+    const dn = el('button', 'btn-sm', '↓'); dn.type = 'button'; dn.title = '아래로'; dn.setAttribute('aria-label', `${s.name} 아래로`);
+    up.addEventListener('click', () => moveSpeaker(s, -1)); dn.addEventListener('click', () => moveSpeaker(s, 1));
+    const grp = A.orderedSpeakers().filter((x) => A.roleRank(x) === A.roleRank(s));
+    up.disabled = grp[0] && grp[0].id === s.id; dn.disabled = grp[grp.length - 1] && grp[grp.length - 1].id === s.id;
+    const mg = el('button', 'btn-sm', '합치기·빼기 ▾'); mg.type = 'button'; mg.id = 'pm-' + s.id;
+    mg.title = '이 인물을 다른 인물과 합치거나 목록에서 빼기 (예: Copy of …)';
+    mg.addEventListener('click', (ev) => { ev.stopPropagation(); mergeMenu(mg, s); });
+    box.append(name, role, up, dn, mg);
     if (s.role === 'pc' || s.role === 'npc') {
       const pl = el('select'); pl.id = 'pp-' + s.id; pl.setAttribute('aria-label', '플레이어');
       const none = el('option', null, s.role === 'npc' ? '(NPC)' : 'PL 미정'); none.value = ''; pl.append(none);
@@ -893,6 +902,40 @@
     }
     return box;
   };
+  // 같은 무리(PC/NPC/에너미/GM/플레이어) 안에서 한 칸 위·아래로. 무리 전체에 순서 번호를 매겨 저장
+  function moveSpeaker(s, dir) {
+    const grp = A.orderedSpeakers().filter((x) => A.roleRank(x) === A.roleRank(s));
+    const i = grp.findIndex((x) => x.id === s.id); const j = i + dir;
+    if (i < 0 || j < 0 || j >= grp.length) return;
+    [grp[i], grp[j]] = [grp[j], grp[i]];
+    const ch = grp.map((x, k) => (x.order === k ? null : Object.assign(clone(x), { order: k }))).filter(Boolean);
+    A.resetPeopleOrder(); A.flashPerson(s.id);
+    store.commit(`${s.name} 순서`, { speakers: ch });
+  }
+  // 합치기: 이 인물의 줄(휴지통 포함)을 다른 인물로 옮기고 이 인물은 목록에서 뺌
+  function mergeMenu(btn, s) {
+    const lines = store.book.entries.filter((e) => e.speaker === s.id);
+    const live = lines.filter((e) => !e.deleted).length;
+    const others = A.orderedSpeakers().filter((x) => x.id !== s.id);
+    const items = [{ heading: live ? `${s.name}의 줄 ${live.toLocaleString()}개를 옮기고 빼기` : `${s.name}은 대사가 없어요` }];
+    others.forEach((x) => items.push({ label: `→ ${x.name}`, color: x.color, run: () => mergeSpeaker(s, x) }));
+    items.push('-', { label: live ? '→ 알 수 없음 (말한 사람 없음)' : '그냥 빼기', danger: !live, run: () => mergeSpeaker(s, null) });
+    openMenu(btn, items);
+  }
+  function mergeSpeaker(s, target) {
+    const lines = store.book.entries.filter((e) => e.speaker === s.id);
+    const ch = lines.map((e) => {
+      const n = clone(e); n.speaker = target ? target.id : null;
+      if (target && (n.kind === 'dialogue' || n.kind === 'chat')) n.kind = isChar(target) ? 'dialogue' : 'chat';
+      if (!target && (n.kind === 'dialogue' || n.kind === 'chat')) n.uncertain = true;
+      return n;
+    });
+    const refs = store.book.speakers.filter((x) => x.player === s.id).map((x) => Object.assign(clone(x), { player: target && !isChar(target) ? target.id : null }));
+    const change = { entries: ch, speakers: refs, removeSpeakers: [s.id] };
+    if (store.book.leadNpc === s.id) change.book = { leadNpc: null };
+    store.commit(target ? `${s.name} → ${target.name} 합치기` : `${s.name} 빼기`, change);
+    A.toast(target ? `${s.name}의 줄 ${ch.length.toLocaleString()}개를 ${target.name}(으)로 옮기고 뺐어요` : `${s.name}을(를) 뺐어요`, { label: '되돌리기', run: () => store.undo() });
+  }
   function changeRole(s, pick) {
     const role = pick === 'enemy' ? 'npc' : pick;
     const next = Object.assign(clone(s), { role });

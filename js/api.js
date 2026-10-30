@@ -77,6 +77,7 @@
   function speakerFromRow(r) {
     const s = { id: r.id, name: r.name, role: r.role, player: r.player_id, color: r.color || '#7d8a96', charId: r.char_id, image: r.image_path };
     if (r.enemy) s.enemy = true;
+    if (r.sort_order != null) s.order = r.sort_order;
     return s;
   }
 
@@ -299,7 +300,9 @@
     async listBooks() {
       const b = await this.base();
       const chars = (bk, edits) => {
-        const sp = bk.speakers.map((s) => (edits && edits.speakers && edits.speakers[s.id]) || s);
+        const eds = (edits && edits.speakers) || {};
+        const sp = bk.speakers.map((s) => (Object.prototype.hasOwnProperty.call(eds, s.id) ? eds[s.id] : s)).filter(Boolean)
+          .concat(Object.values(eds).filter((s) => s && !bk.speakers.some((x) => x.id === s.id)));
         const n = new Map();
         bk.entries.forEach((e0) => {
           const e = edits && edits.entries && Object.prototype.hasOwnProperty.call(edits.entries, e0.id) ? edits.entries[e0.id] : e0;

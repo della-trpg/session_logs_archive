@@ -49,7 +49,10 @@
     if (!ov) return;
     const b = this.book;
     Object.entries(ov.entries || {}).forEach(([id, e]) => this.putEntry(id, e));
-    Object.values(ov.speakers || {}).forEach((s) => { const i = b.speakers.findIndex((x) => x.id === s.id); if (i >= 0) b.speakers[i] = s; });
+    Object.entries(ov.speakers || {}).forEach(([id, s]) => {
+      const i = b.speakers.findIndex((x) => x.id === id);
+      if (s == null) { if (i >= 0) b.speakers.splice(i, 1); } else if (i >= 0) b.speakers[i] = s; else b.speakers.push(s);   // 지운 인물·새 인물도
+    });
     Object.values(ov.sessions || {}).forEach((s) => { const i = b.sessions.findIndex((x) => x.no === s.no); if (i >= 0) b.sessions[i] = s; else b.sessions.push(s); });
     Object.assign(b, ov.book || {});
     this.ov = { entries: ov.entries || {}, speakers: ov.speakers || {}, sessions: ov.sessions || {}, book: ov.book || {} };
@@ -212,6 +215,7 @@
     (ch.entries || []).forEach((e) => { before.entries.push([e.id, clone(this.byId.get(e.id) || null)]); after.entries.push([e.id, clone(e)]); });
     (ch.removeEntries || []).forEach((id) => { before.entries.push([id, clone(this.byId.get(id) || null)]); after.entries.push([id, null]); });
     (ch.speakers || []).forEach((s) => { before.speakers.push([s.id, clone(this.spk.get(s.id) || null)]); after.speakers.push([s.id, clone(s)]); });
+    (ch.removeSpeakers || []).forEach((id) => { before.speakers.push([id, clone(this.spk.get(id) || null)]); after.speakers.push([id, null]); });
     (ch.sessions || []).forEach((s) => { before.sessions.push([s.no, clone(b.sessions.find((x) => x.no === s.no) || null)]); after.sessions.push([s.no, clone(s)]); });
     if (ch.book) {
       before.book = {}; Object.keys(ch.book).forEach((k) => { if (BOOK_FIELDS.includes(k)) before.book[k] = clone(b[k] === undefined ? null : b[k]); });

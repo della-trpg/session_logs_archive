@@ -178,7 +178,7 @@
         <div class="nv-cast" id="nvCast"></div>
         <div class="nv-sys" id="nvSys" hidden></div>
         <section class="nv-chat" id="nvChat" hidden aria-label="사담">
-          <div class="nv-chat-head"><b>사담</b><span class="nv-page" id="nvChatPage"></span></div>
+          <div class="nv-chat-head"><b>사담</b><span class="nv-page" id="nvChatPage"></span><button type="button" class="nv-btn nv-skip" id="nvSkip" title="사담 건너뛰고 다음 대사로 (S)">다음 대사로 ▸</button></div>
           <ol class="nv-chat-list" id="nvChatList"></ol>
         </section>
         <div class="nv-card" id="nvCard" hidden></div>
@@ -215,6 +215,7 @@
     $('nvPrev').addEventListener('click', (ev) => { ev.stopPropagation(); prev(); });
     $('nvNext').addEventListener('click', (ev) => { ev.stopPropagation(); next(); });
     $('nvAuto').addEventListener('click', (ev) => { ev.stopPropagation(); setAuto(!autoOn); });
+    $('nvSkip').addEventListener('click', (ev) => { ev.stopPropagation(); skipChat(); });
     $('nvScenes').addEventListener('click', () => toggleSheet('scenes'));
     $('nvLogBtn').addEventListener('click', () => toggleSheet('log'));
     $('nvSetBtn').addEventListener('click', () => toggleSheet('set'));
@@ -259,6 +260,7 @@
     if (k === 'End') { ev.preventDefault(); show(steps.length - 1, true); return; }
     if (k === 'a' || k === 'A' || k === 'ㅁ') { setAuto(!autoOn); return; }
     if (k === 'l' || k === 'L' || k === 'ㅣ') { toggleSheet('log'); return; }
+    if ((k === 's' || k === 'S' || k === 'ㄴ') && steps[idx] && steps[idx].t === 'chat') { skipChat(); return; }
   }
 
   // ── 넘기기 ───────────────────────────
@@ -271,6 +273,13 @@
   function prev() {
     if (dom.$('nvCard').dataset.end) { show(idx, true); return; }
     if (idx > 0) show(idx - 1, true);
+  }
+  // 사담 건너뛰기: 이어지는 사담 쪽을 모두 넘기고 다음 대사(사담이 아닌 단계)로
+  function skipChat() {
+    let j = idx;
+    while (j < steps.length && steps[j].t === 'chat') j++;
+    if (j >= steps.length) { showEnd(); return; }
+    show(j);
   }
   function setAuto(on) {
     autoOn = on;
@@ -422,6 +431,7 @@
   function showChat(st, instant) {
     const { $ } = dom;
     $('nvChatPage').textContent = st.pages > 1 ? `${st.page + 1}/${st.pages}` : '';
+    $('nvSkip').hidden = !(steps[idx + 1] && steps[idx + 1].t === 'chat');   // 사담이 다음 쪽에도 이어질 때만
     const list = $('nvChatList'); list.replaceChildren();
     let prev = null;
     const lis = st.items.map((x) => {
@@ -711,7 +721,7 @@
       });
       row.append(lab, seg); body.append(row);
     });
-    body.append(el('p', 'vp-note', '스페이스·→·누르기: 다음 · ←: 이전 · A: 자동 · L: 지난 대사 · Esc: 닫기'));
+    body.append(el('p', 'vp-note', '스페이스·→·누르기: 다음 · ←: 이전 · A: 자동 · S: 사담 건너뛰기 · L: 지난 대사 · Esc: 닫기'));
     body.append(el('p', 'vp-note', '이 기기에서 다음에 열 때도 그대로예요. 채팅 로그의 보기 설정과는 따로예요.'));
   }
   function setPref(key, v) {

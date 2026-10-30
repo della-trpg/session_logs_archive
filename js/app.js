@@ -128,6 +128,13 @@
   }
 
   const book = () => store.book;
+  // 인물 순서: PC → NPC → 에너미 → GM → 플레이어, 같은 무리 안에서는 인물 설정에서 정한 순서(없으면 처음 나온 순)
+  const roleRank = (s) => (s.role === 'pc' ? 0 : s.role === 'npc' ? (s.enemy ? 2 : 1) : s.role === 'gm' ? 3 : 4);
+  const idNum = (s) => Number(String(s.id).replace(/\D/g, '')) || 0;
+  function orderedSpeakers(list) {
+    return (list || store.book.speakers).slice().sort((a, b) => roleRank(a) - roleRank(b)
+      || (a.order ?? 1e9) - (b.order ?? 1e9) || idNum(a) - idNum(b));
+  }
   const spk = (id) => (id ? store.spk.get(id) : null);
   const sessionList = () => book().sessions.filter((s) => store.entries(s.no).length);
   const sessionLabel = (s) => (s.no === 0 ? s.title || '준비' : s.title || `${s.no}회차`);
@@ -158,8 +165,9 @@
 
     const cast = $('cast'); cast.replaceChildren();
     // PC는 늘 보이고, NPC(에너미 포함)는 'NPC n명' 단추로 펼치고 접음. 보고 있는 인물이 NPC면 펼친 채로
-    const pcs = b.speakers.filter((s) => s.role === 'pc');
-    const npcs = b.speakers.filter((s) => s.role === 'npc').sort((x, y) => (!!x.enemy - !!y.enemy));
+    const ordered = orderedSpeakers();
+    const pcs = ordered.filter((s) => s.role === 'pc');
+    const npcs = ordered.filter((s) => s.role === 'npc');
     const focusNpc = S.focus && npcs.some((s) => s.id === S.focus);
     const open = S.castOpen || focusNpc;
     const chars = pcs.concat(open ? npcs : []);
@@ -869,7 +877,7 @@
     const order = { pc: 0, npc: 1, gm: 2, pl: 3 };
     const roleName = { pc: 'PC', npc: 'NPC', gm: 'GM', pl: '플레이어' };
     // 줄 순서는 창을 열 때 한 번만 정함: 열어 둔 채 역할을 바꿔도 그 사람이 다른 자리로 튀지 않게
-    if (dlg.hidden || !peopleOrder) peopleOrder = book().speakers.slice().sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9)).map((s) => s.id);
+    if (dlg.hidden || !peopleOrder) peopleOrder = orderedSpeakers().map((s) => s.id);
     const byId = new Map(book().speakers.map((s) => [s.id, s]));
     const ids = peopleOrder.filter((id) => byId.has(id)).concat(book().speakers.filter((s) => !peopleOrder.includes(s.id)).map((s) => s.id));
     ids.map((id) => byId.get(id)).forEach((s) => {
@@ -961,7 +969,7 @@
       renderHead();
       if (!$('people').hidden) {
         const sp = ev.op && ev.op.after.speakers;
-        peopleFlash = sp && sp.length === 1 && sp[0][1] ? sp[0][0] : null;
+        peopleFlash = peopleFlash || (sp && sp.length === 1 && sp[0][1] ? sp[0][0] : null);
         openPeople();
         peopleFlash = null;
       }
@@ -1004,5 +1012,6 @@
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
     diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
-    openBook, ctx: () => ctx, paint, updateBarBook, goTo, openEntry, fmtPeriod, sayParts, fmtInto, stripMd };
+    openBook, ctx: () => ctx, paint, updateBarBook, goTo, openEntry, fmtPeriod, sayParts, fmtInto, stripMd,
+    orderedSpeakers, roleRank, resetPeopleOrder: () => { peopleOrder = null; }, flashPerson: (id) => { peopleFlash = id; } };
 })();

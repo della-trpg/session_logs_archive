@@ -959,3 +959,16 @@ body.editing .chip-novel, body.editing #novelActs { display: none; }
 @media (prefers-reduced-motion: reduce) { .person.just-changed { animation: none; } }
 .img-dice select { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.25rem 0.4rem; font-size: 0.85rem; }
 #ask { z-index: 55; }   /* 다른 창 위에 */
+.nv-chat-head { gap: 0.5rem; }
+.nv-chat-head .nv-page { margin-left: auto; }
+.nv-skip { padding: 0.12rem 0.55rem; font-size: 0.74rem; }
+
+/* 편집: 사담 로그 끼워 넣기 */
+.cm-body { display: grid; gap: 0.6rem; overflow-y: auto; max-height: min(62vh, 40rem); padding-right: 0.2rem; }
+.cm-block { display: grid; gap: 0.3rem; padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.cm-title { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
+.cm-title b { color: var(--ink); }
+.cm-peek { margin: 0; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.cm-block select, .cm-people select { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.3rem 0.45rem; font-size: 0.84rem; max-width: 100%; }
+.cm-people { display: grid; gap: 0.35rem; }
+.cm-check { font-size: 0.82rem; color: var(--ink-soft); display: flex; gap: 0.4rem; align-items: center; }
