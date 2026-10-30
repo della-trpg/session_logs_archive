@@ -217,6 +217,21 @@
     E.updateBar();
     const op = ev.op;
     if (!op) { A.render(true); return; }
+    // 인물만 바뀐 경우(이름·역할·색 등): 그 인물의 줄만 다시 그림 (전체 6천여 줄을 다시 그리지 않게)
+    const spOnly = (op.after.speakers || []).length && !(op.after.entries || []).length && !op.after.book && !(op.after.sessions || []).length;
+    if (spOnly) {
+      const ids = new Set(op.after.speakers.map(([id]) => id));
+      const added = op.after.speakers.some(([id]) => !(op.before.speakers || []).some(([b, x]) => b === id && x));
+      if (!added) {
+        const anchor = A.topVisibleEntry();
+        for (const r of $('log').querySelectorAll('.er')) {
+          const e = store.byId.get(r.dataset.id);
+          if (e && ids.has(e.speaker)) r.replaceWith(row(e));
+        }
+        if (anchor) A.restorePlace(anchor);
+        return;
+      }
+    }
     if ((op.after.speakers || []).length || op.after.book || (op.after.sessions || []).some(([no, s]) => !s || !store.book.sessions.find((x) => x.no === no))) {
       A.render(true); return;
     }

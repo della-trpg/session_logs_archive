@@ -857,12 +857,22 @@
   }
 
   // ── 인물 색 ───────────────────────────
+  let peopleOrder = null;
+  let peopleFlash = null;   // 방금 바꾼 사람 (잠깐 표시)
   function openPeople() {
     const dlg = $('people');
-    const list = $('peopleList'); list.replaceChildren();
+    const list = $('peopleList');
+    // 다시 그려도 창 스크롤 위치와 지금 만지던 칸(포커스)을 그대로
+    const sheet = dlg.querySelector('.sheet');
+    const keep = { top: sheet ? sheet.scrollTop : 0, listTop: list.scrollTop, focus: !dlg.hidden && document.activeElement && dlg.contains(document.activeElement) ? document.activeElement.id : null };
+    list.replaceChildren();
     const order = { pc: 0, npc: 1, gm: 2, pl: 3 };
     const roleName = { pc: 'PC', npc: 'NPC', gm: 'GM', pl: '플레이어' };
-    book().speakers.slice().sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9)).forEach((s) => {
+    // 줄 순서는 창을 열 때 한 번만 정함: 열어 둔 채 역할을 바꿔도 그 사람이 다른 자리로 튀지 않게
+    if (dlg.hidden || !peopleOrder) peopleOrder = book().speakers.slice().sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9)).map((s) => s.id);
+    const byId = new Map(book().speakers.map((s) => [s.id, s]));
+    const ids = peopleOrder.filter((id) => byId.has(id)).concat(book().speakers.filter((s) => !peopleOrder.includes(s.id)).map((s) => s.id));
+    ids.map((id) => byId.get(id)).forEach((s) => {
       const row = el('div', 'person');
       const isChar = s.role === 'pc' || s.role === 'npc';
       const sw = isChar ? avatar(s) : el('span', 'dot big');
@@ -886,6 +896,8 @@
       custom.id = 'color-' + s.id; custom.title = '직접 고르기'; custom.setAttribute('aria-label', `${s.name} 색 직접 고르기`);
       custom.addEventListener('change', () => setColor(s, custom.value));
       pick.append(custom);
+      row.dataset.sp = s.id;
+      if (peopleFlash === s.id) row.classList.add('just-changed');
       row.append(sw, name, pick);
       if (SL.editor && SL.editor.active) row.append(SL.editor.personFields(s));
       list.append(row);
@@ -895,7 +907,11 @@
     $('peopleNote').textContent = editing
       ? '이름·역할·플레이어·색을 바꿔요. 역할은 줄 종류(대사/사담)를 자동으로 바꾸지 않아요.'
       : '대사의 이름, 아바타, 사담의 점 색이 바뀌어요.' + (store.mode === 'demo' ? ' 데모에서는 이 브라우저에만 저장돼요.' : '');
-    if (dlg.hidden) { dlg.hidden = false; $('peopleClose').focus(); }
+    if (dlg.hidden) { dlg.hidden = false; $('peopleClose').focus(); return; }
+    if (sheet) sheet.scrollTop = keep.top;
+    list.scrollTop = keep.listTop;
+    const f = keep.focus && document.getElementById(keep.focus);
+    if (f) f.focus({ preventScroll: true });
   }
   function setColor(s, c) {
     const next = SL.clone(s); next.color = c;
@@ -943,7 +959,12 @@
       if (ev.saved != null || ev.saving) { if (SL.editor) SL.editor.updateBar(); return; }
       if (ev.op && (ev.op.after.speakers || []).length) resolveImages();
       renderHead();
-      if (!$('people').hidden) openPeople();
+      if (!$('people').hidden) {
+        const sp = ev.op && ev.op.after.speakers;
+        peopleFlash = sp && sp.length === 1 && sp[0][1] ? sp[0][0] : null;
+        openPeople();
+        peopleFlash = null;
+      }
       if (SL.editor && SL.editor.active) SL.editor.onChange(ev); else render(true);
     });
   }
