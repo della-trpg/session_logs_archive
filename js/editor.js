@@ -554,6 +554,7 @@
     const si = sessions.findIndex((s) => s.no === e.session);
     const items = [
       { label: '아래에 새 줄', run: () => insertNear(e, true) },
+      { label: '아래에 새 주사위 줄', run: () => insertDice(e) },
       { label: '위에 새 줄', run: () => insertNear(e, false) },
       '-',
       { label: '위 줄과 합치기', disabled: !visPrev || e.kind === 'dice' || visPrev.kind === 'dice', run: () => mergeUp(e, visPrev),
@@ -564,8 +565,9 @@
       { label: '이 줄부터 다음 회차로', run: () => toNextSession(e), hint: si === sessions.length - 1 ? '새 회차를 만들어요' : '' },
       { label: '이 줄까지 이전 회차로', disabled: si <= 0, run: () => toPrevSession(e) },
     ];
+    if (e.kind !== 'dice') items.push('-', { label: '주사위 줄로 바꾸기…', run: () => editDice(e) });
     if (e.kind === 'dice') {
-      items.push('-', { label: '카드 이름표 바꾸기', run: () => askDiceLabel([e.id]) }, { label: '판정 결과 바꾸기', run: () => resultMenu(btn, e) });
+      items.push('-', { label: '주사위 고치기…', run: () => editDice(e) }, { label: '카드 이름표 바꾸기', run: () => askDiceLabel([e.id]) }, { label: '판정 결과 바꾸기', run: () => resultMenu(btn, e) });
     }
     if (e.orig != null && e.orig !== e.text) items.push('-', { label: '원문으로 되돌리기', hint: e.orig.slice(0, 40), run: () => store.commit('원문으로', { entries: [Object.assign(clone(e), { text: e.orig })] }) });
     if (e.kind === 'dialogue') {
@@ -598,6 +600,13 @@
     if (!below) { const list = store.entries(e.session, true); const i = list.findIndex((x) => x.id === e.id); afterId = i > 0 ? list[i - 1].id : null; }
     store.commit('새 줄', { entries: placeChanges([id], e.session, afterId, { [id]: ne }) });
     requestAnimationFrame(() => { const r = document.getElementById(id); if (r) { r.scrollIntoView({ block: 'center' }); startEdit(r, store.byId.get(id)); } });
+  }
+
+  // 아래에 새 주사위 줄: 먼저 눈을 적는 창 → 확인하면 그 자리에 주사위 카드
+  function insertDice(e) {
+    const id = store.newId();
+    const ne = { id, seq: 0, session: e.session, kind: 'chat', speaker: e.speaker, text: '', ts: e.ts, created: true };
+    editDice(ne, { place: e.id, isNew: true });
   }
 
   // 줄바꿈 없이 이어 붙임. 낱말이 붙지 않게 띄어쓰기 한 칸 (위 글이 공백으로 끝나거나 아래 글이 문장부호로 시작하면 그대로)
@@ -675,14 +684,91 @@
 
   // ── 종류 · 말한 사람 ────────────────────
   function kindMenu(btn, ids) {
-    const items = KIND_OPTS.filter(([k]) => k !== 'dice').map(([k, label]) => ({
+    const items = KIND_OPTS.map(([k, label]) => ({
       label, run: () => {
-        const ch = ids.map((id) => store.byId.get(id)).filter((e) => e.kind !== 'dice' && e.kind !== k).map((e) => Object.assign(clone(e), { kind: k }));
+        if (k === 'dice') {
+          // 주사위로: 눈·목표치 등을 적는 창 (한 줄씩)
+          const list = ids.map((id) => store.byId.get(id)).filter((e) => e.kind !== 'dice');
+          if (!list.length) return;
+          if (list.length > 1) { A.toast('주사위로 바꾸기는 한 줄씩 해 주세요'); return; }
+          editDice(list[0]);
+          return;
+        }
+        const ch = ids.map((id) => store.byId.get(id)).filter((e) => e.kind !== k).map((e) => {
+          const n = Object.assign(clone(e), { kind: k });
+          if (e.kind === 'dice') { if (!n.text) n.text = diceAsText(e.dice); delete n.dice; }   // 주사위 → 글 줄: 굴림 내용을 글로
+          return n;
+        });
         if (ch.length) store.commit(`${ch.length}줄 종류 → ${KIND_NAME[k]}`, { entries: ch });
-        else if (ids.some((id) => store.byId.get(id).kind === 'dice')) A.toast('주사위 줄은 종류를 바꿀 수 없어요');
       },
     }));
     openMenu(btn, items);
+  }
+  function diceAsText(d) {
+    d = d || {};
+    const faces = (d.dice || []).join(', ');
+    const sum = d.sum != null ? d.sum : d.total;
+    return [d.title, faces ? `${(d.rolls || []).join('+').toUpperCase() || '주사위'} → ${faces}${sum != null && (d.dice || []).length > 1 ? ` = ${sum}` : ''}` : null,
+      typeof d.target === 'number' ? `목표치 ${d.target}` : null].filter(Boolean).join(' · ');
+  }
+
+  // 주사위 줄 만들기·고치기: 이름표·제목·눈·면 수·수정치·목표치·결과
+  const RESULT_OPTS = [['', '자동 (목표치가 있으면 계산)'], ['success', '성공'], ['fail', '실패'], ['special', '스페셜'], ['fumble', '펌블'], ['none', '표시 안 함']];
+  function editDice(e, opts) {
+    opts = opts || {};
+    const d = e.kind === 'dice' && e.dice ? e.dice : {};
+    const sides0 = (d.sides && d.sides.find((x) => x)) || 6;
+    ask({
+      title: opts.isNew ? '새 주사위 줄' : e.kind === 'dice' ? '주사위 고치기' : '주사위 줄로 바꾸기',
+      note: opts.isNew ? '고른 줄 바로 아래에 주사위 카드를 넣어요. 굴린 사람은 그 줄과 같아요 (나중에 바꿀 수 있어요).'
+        : e.kind === 'dice' ? '눈을 바꾸면 합계와 (자동일 때) 판정 결과도 다시 계산해요.'
+        : '이 줄을 주사위 카드로 바꿔요. 지금 글은 원문으로 남아서 나중에 되돌릴 수 있어요. 말한 사람은 그대로예요.',
+      fields: [
+        { id: 'dz-faces', label: '주사위 눈 (띄어쓰기로)', value: (d.dice || []).join(' '), placeholder: '예: 3 5' },
+        { id: 'dz-sides', label: '면 수', type: 'select', value: String(sides0), options: [4, 6, 8, 10, 12, 20, 100].map((n) => [String(n), 'd' + n]) },
+        { id: 'dz-mod', label: '수정치 (없으면 비움)', value: d.mod ? String(d.mod) : '', placeholder: '예: -1' },
+        { id: 'dz-target', label: '목표치 (없으면 비움)', value: typeof d.target === 'number' ? String(d.target) : '', placeholder: '예: 5' },
+        { id: 'dz-title', label: '판정·주문 이름 (없으면 비움)', value: d.title || '', max: 60 },
+        { id: 'dz-label', label: '카드 이름표 (비우면 기본)', value: d.label || '', max: 16 },
+        { id: 'dz-result', label: '판정 결과', type: 'select', value: d.resultOverride || '', options: RESULT_OPTS },
+      ],
+      ok: opts.isNew ? '넣기' : e.kind === 'dice' ? '고치기' : '주사위로 바꾸기',
+      cancel: opts.cancel,
+      run: ([fv, sv, mv, tv, title, label, res]) => {
+        const sides = Number(sv);
+        const faces = fv.split(/[\s,，、+]+/).filter(Boolean).map(Number);
+        if (!faces.length || faces.some((n) => !Number.isInteger(n) || n < 1 || n > sides)) { A.toast(`주사위 눈은 1~${sides} 사이 숫자를 띄어쓰기로 적어 주세요`); return; }
+        const mod = mv.trim() ? Number(mv.trim().replace(/^\+/, '')) : 0;
+        const target = tv.trim() ? Number(tv.trim()) : null;
+        if (!Number.isFinite(mod) || (target != null && !Number.isFinite(target))) { A.toast('수정치·목표치는 숫자로 적어 주세요'); return; }
+        const n = clone(e);
+        const nd = Object.assign({}, e.kind === 'dice' ? d : { template: 'manual' });
+        const same = (nd.dice || []).join() === faces.join() && (nd.sides || []).every((x) => !x || x === sides);
+        nd.dice = faces; nd.sides = faces.map(() => sides);
+        if (!same || !nd.rolls || nd.template === 'manual') nd.rolls = [`${faces.length}d${sides}`];
+        const raw = faces.reduce((a, b) => a + b, 0);
+        if (mod) nd.mod = mod; else delete nd.mod;
+        if (faces.length > 1 || mod) nd.sum = raw + mod; else delete nd.sum;
+        nd.total = raw + mod;
+        if (target != null) nd.target = target; else delete nd.target;
+        if (title.trim()) nd.title = title.trim(); else delete nd.title;
+        if (label.trim()) nd.label = label.trim(); else delete nd.label;
+        if (!nd.kind || nd.kind === 'roll' || nd.kind === 'check') nd.kind = target != null ? 'check' : 'roll';
+        // 자동 판정: 2D6 12 스페셜·2 펌블, 그 밖에는 달성치 ≥ 목표치
+        delete nd.result;
+        if (target != null || nd.kind === 'check' || nd.kind === 'spell') {
+          if (faces.length === 2 && sides === 6 && raw === 12) nd.result = 'special';
+          else if (faces.length === 2 && sides === 6 && raw === 2) nd.result = 'fumble';
+          else if (target != null) nd.result = raw + mod >= target ? 'success' : 'fail';
+        }
+        if (res) nd.resultOverride = res; else delete nd.resultOverride;
+        n.dice = nd;
+        if (e.kind !== 'dice') { if (n.orig == null && !n.created && e.text) n.orig = e.text; n.kind = 'dice'; n.text = ''; delete n.imgs; delete n.say; }
+        if (opts.place) store.commit('새 주사위 줄', { entries: placeChanges([n.id], n.session, opts.place, { [n.id]: n }) });
+        else store.commit(e.kind === 'dice' ? '주사위 고치기' : '주사위 줄로 바꾸기', { entries: [n] });
+        if (opts.done) opts.done();
+      },
+    });
   }
   function speakerMenu(btn, ids) {
     const sp = store.book.speakers;
@@ -1063,14 +1149,16 @@
     dv.setAttribute('aria-label', '주사위 눈');
     const ds = el('select'); ds.id = 'imgSides-' + gi; ds.setAttribute('aria-label', '주사위 면 수');
     [4, 6, 8, 10, 12, 20, 100].forEach((n) => { const o = el('option', null, 'd' + n); o.value = String(n); o.selected = n === 6; ds.append(o); });
+    const dm = el('select'); dm.id = 'imgDiceMode-' + gi; dm.setAttribute('aria-label', '글 사이에 있을 때');
+    [['card', '카드로 (글 사이면 줄을 나눔)'], ['glyph', '글 사이에는 눈 글자로']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; dm.append(o); });
     const dok = el('button', 'btn-sm', '주사위로 바꾸기'); dok.type = 'submit';
-    dform.append(dv, ds, dok);
+    dform.append(dv, ds, dm, dok);
     dform.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const sides = Number(ds.value);
       const faces = dv.value.split(/[\s,，、+]+/).filter(Boolean).map(Number);
       if (!faces.length || faces.some((n) => !Number.isInteger(n) || n < 1 || n > sides)) { A.toast(`1~${sides} 사이 숫자를 띄어쓰기로 적어 주세요`); dv.focus(); return; }
-      diceFromImage(g, faces, sides);
+      diceFromImage(g, faces, sides, dm.value);
     });
     info.append(where, ctx, form, dform);
     const onlyImg = g.uses.filter(({ e }) => e.text.trim() === '(그림)');
@@ -1088,23 +1176,51 @@
     return row;
   }
   const DIE_CHAR = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-  function diceFromImage(g, faces, sides) {
+  function manualDice(faces, sides) {
+    const sum = faces.reduce((a, b) => a + b, 0);
+    const d = { template: 'manual', kind: 'roll', rolls: [`${faces.length}d${sides}`], dice: faces.slice(), sides: faces.map(() => sides), total: sum };
+    if (faces.length > 1) d.sum = sum;
+    return d;
+  }
+  // 글 사이의 그림 → 줄을 나눠 [앞 글] [주사위 카드] [뒤 글]. 앞 조각이 원래 줄 id를 이어받음
+  function splitForDice(e, ks, dice) {
+    const parts = []; let buf = ''; let bufImgs = []; let last = 0; let occ = -1;
+    const re = /\(그림\)/g; let m;
+    while ((m = re.exec(e.text))) {
+      occ++;
+      const before = e.text.slice(last, m.index); last = m.index + m[0].length;
+      if (ks.has(occ)) { buf += before; parts.push({ t: 'text', text: buf, imgs: bufImgs }); parts.push({ t: 'dice' }); buf = ''; bufImgs = []; }
+      else { buf += before + m[0]; if (e.imgs && e.imgs[occ]) bufImgs.push(e.imgs[occ]); }
+    }
+    buf += e.text.slice(last); parts.push({ t: 'text', text: buf, imgs: bufImgs });
+    const items = parts.filter((p) => p.t === 'dice' || p.text.trim());
+    const out = []; const newIds = []; const map = {};
+    items.forEach((p, i) => {
+      const n = i === 0 ? clone(e) : { id: store.newId(), seq: 0, session: e.session, kind: e.kind, speaker: e.speaker, text: '', ts: e.ts, created: true };
+      if (i === 0 && n.orig == null && !n.created) n.orig = e.text;
+      delete n.imgs; delete n.dice;
+      if (p.t === 'dice') { n.kind = 'dice'; n.text = ''; n.dice = Object.assign({}, dice); delete n.say; }
+      else { n.kind = e.kind; n.text = p.text.trim(); if (p.imgs.length) n.imgs = p.imgs; }
+      if (i === 0) out.push(n); else { newIds.push(n.id); map[n.id] = n; }
+    });
+    return newIds.length ? out.concat(placeChanges(newIds, e.session, e.id, map)) : out;
+  }
+  function diceFromImage(g, faces, sides, mode) {
     const byE = new Map();
     g.uses.forEach(({ e, k }) => { if (!byE.has(e.id)) byE.set(e.id, new Set()); byE.get(e.id).add(k); });
     const inline = sides === 6 ? faces.map((n) => DIE_CHAR[n - 1]).join('') : `[d${sides}: ${faces.join(', ')}]`;
-    const sum = faces.reduce((a, b) => a + b, 0);
+    const dice = manualDice(faces, sides);
     const ch = []; let cards = 0;
     byE.forEach((ks, id) => {
       const e = store.byId.get(id); const n = clone(e);
-      if (e.text.trim() === '(그림)' && (e.imgs || []).length === 1) {
-        // 그림만 있는 줄 → 주사위 카드 (말한 사람은 그대로)
-        n.kind = 'dice'; n.text = '';
-        n.dice = { template: 'manual', kind: 'roll', rolls: [`${faces.length}d${sides}`], dice: faces.slice(), sides: faces.map(() => sides), total: sum };
-        if (faces.length > 1) n.dice.sum = sum;
-        delete n.imgs;
-        if (n.orig == null && !n.created) n.orig = e.text;
+      const onlyImg = e.text.trim() === '(그림)' && (e.imgs || []).length === 1;
+      if (onlyImg || mode !== 'glyph') {
+        // 주사위 카드로 (그림만 있는 줄은 그 줄이, 글 사이면 줄을 나눠서). 말한 사람은 그대로
+        splitForDice(e, ks, dice).forEach((x) => ch.push(x));
         cards++;
-      } else {
+        return;
+      }
+      {
         let occ = -1;
         n.text = e.text.replace(/\(그림\)/g, (m0) => { occ++; return ks.has(occ) ? inline : m0; });
         n.imgs = (e.imgs || []).filter((_, k) => !ks.has(k));
@@ -1114,7 +1230,8 @@
       ch.push(n);
     });
     store.commit(`그림 → 주사위 (${ch.length}줄)`, { entries: ch });
-    A.toast(cards === ch.length ? `${ch.length}줄을 주사위 카드로 바꿨어요` : `${ch.length}줄을 바꿨어요 (주사위 카드 ${cards}줄, 글 사이 주사위 눈 ${ch.length - cards}줄)`,
+    const glyphs = byE.size - cards;
+    A.toast(glyphs ? `${byE.size}줄을 바꿨어요 (주사위 카드 ${cards}줄, 글 사이 주사위 눈 ${glyphs}줄)` : `${cards}줄의 그림을 주사위 카드로 바꿨어요`,
       { label: '되돌리기', run: () => { store.undo(); openImages(); } });
     openImages();
   }
