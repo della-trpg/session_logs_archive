@@ -7,7 +7,9 @@
   'use strict';
   const SL = window.SL;
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const ROLES = [['pc', 'PC'], ['npc', 'NPC'], ['gm', 'GM'], ['pl', '플레이어']];
+  const ROLES = [['pc', 'PC'], ['npc', 'NPC'], ['enemy', '에너미'], ['gm', 'GM'], ['pl', '플레이어']];
+  // 금서·단장처럼 적으로 나오는 이름은 처음부터 '에너미'로 (목록의 대표 NPC에서 빠짐)
+  const ENEMY_NAME = /^(금서|단장)(?=$|[\s〈<《『「(])/;
   const KIND_LABEL = { dialogue: '대사', narration: '나레이션', chat: '사담', dice: '주사위', system: '진행', scene: '장면', meta: '회차 카드', whisper: '귓속말' };
   const CHUNK = 500;   // 한 번에 보내는 줄 수 (서버 처리 시간 여유)
 
@@ -59,7 +61,10 @@
       const tpl = st.raw.entries.find((e) => e.dice && e.dice.template && e.dice.template !== 'inline');
       const guessSystem = tpl && tpl.dice.template === 'MagiDice' ? '마기카로기아' : '';
       st.cfg = { title: first.title, system: first.system || guessSystem, gm: first.gm || '', players: (first.players || []).join(', '), speakers: {} };
-      st.raw.speakers.forEach((s, i) => { st.cfg.speakers[s.key] = { name: s.name, role: s.guess || 'pc', player: '', color: first.speakers[i].color, charId: '' }; });
+      st.raw.speakers.forEach((s, i) => {
+        const role = s.guess !== 'gm' && s.guess !== 'pl' && ENEMY_NAME.test(s.name.trim()) ? 'enemy' : s.guess || 'pc';
+        st.cfg.speakers[s.key] = { name: s.name, role, player: '', color: first.speakers[i].color, charId: '' };
+      });
       st.chars = await ctx.worldChars(st.world);
       drawSetup();
     }
@@ -110,9 +115,9 @@
         const role = select('impR-' + k, ROLES, c.role, (v) => { c.role = v; drawSetup(); });
         role.setAttribute('aria-label', `${s.name} 역할`);
         row.append(color, name, role);
-        if (c.role === 'pc' || c.role === 'npc') {
+        if (c.role === 'pc' || c.role === 'npc' || c.role === 'enemy') {
           const players = Object.entries(st.cfg.speakers).filter(([, x]) => x.role === 'pl' || x.role === 'gm').map(([k, x]) => [k, x.name]);
-          const pl = select('impP-' + k, [['', c.role === 'npc' ? '(NPC)' : 'PL 미정']].concat(players), c.player, (v) => { c.player = v; });
+          const pl = select('impP-' + k, [['', c.role === 'pc' ? 'PL 미정' : '(NPC)']].concat(players), c.player, (v) => { c.player = v; });
           pl.setAttribute('aria-label', `${s.name} 플레이어`);
           row.append(pl);
           if (st.chars.length) {
@@ -143,7 +148,7 @@
       const sp = {};
       Object.entries(st.cfg.speakers).forEach(([k, c]) => {
         sp[k] = { name: c.name.trim() || k, role: c.role, color: c.color, charId: c.charId || null,
-          player: (c.role === 'pc' || c.role === 'npc') && c.player ? c.player : null };
+          player: (c.role === 'pc' || c.role === 'npc' || c.role === 'enemy') && c.player ? c.player : null };
       });
       return { unknownNameless: st.unknown, title: st.cfg.title.trim() || null, system: st.cfg.system.trim() || null, gm: st.cfg.gm.trim() || null,
         players: st.cfg.players.split(',').map((x) => x.trim()).filter(Boolean), speakers: sp };

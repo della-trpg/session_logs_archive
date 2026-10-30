@@ -97,13 +97,32 @@
       if (tag === 'img') {
         const label = cutinLabel(ch.getAttribute('alt'));
         if (label) acc.cutins.push(label);
-        else acc.text += '(그림)';
+        else {
+          // 채팅 속 그림: 자리에 '(그림)'을 두고 주소를 따로 기억 (편집의 '그림 목록'에서 글로 바꿀 수 있게)
+          acc.text += '(그림)';
+          const src = ch.getAttribute('src') || '';
+          if (/^https?:\/\//i.test(src)) (acc.imgs || (acc.imgs = [])).push({ src: src.slice(0, 500), alt: (ch.getAttribute('alt') || '').slice(0, 80) });
+          else (acc.imgs || (acc.imgs = [])).push({ src: '', alt: (ch.getAttribute('alt') || '').slice(0, 80) });
+        }
         return;
       }
       if (tag === 'br') { acc.text += '\n'; return; }
       if (tag === 'a' && !ch.querySelector('img')) {
+        // 글자 없는 링크(예: 스크립트가 붙이는 '#vd-permitted-api-chat')는 버림. 글자 없는 바깥 주소만 주소 그대로
         const t = ch.textContent.trim();
-        acc.text += t || ch.getAttribute('href') || '';
+        const href = ch.getAttribute('href') || '';
+        if (t) acc.text += ch.textContent.replace(/\s+/g, ' ');
+        else if (/^https?:\/\//i.test(href)) acc.text += href;
+        return;
+      }
+      // 굵게·기울임·취소선 → 마크다운 (**굵게** *기울임* ~~취소선~~). 보기 화면이 다시 서식으로 그림
+      const mark = tag === 'strong' || tag === 'b' ? '**' : tag === 'em' || tag === 'i' ? '*' : tag === 's' || tag === 'strike' || tag === 'del' ? '~~' : null;
+      if (mark) {
+        const start = acc.text.length;
+        walk(ch, acc);
+        const inner = acc.text.slice(start);
+        const m = inner.match(/^(\s*)([\s\S]*?)(\s*)$/);
+        if (m[2] && !m[2].includes('\n') && !m[2].includes(mark[0])) acc.text = acc.text.slice(0, start) + m[1] + mark + m[2] + mark + m[3];
         return;
       }
       const block = tag === 'p' || tag === 'div';
@@ -116,6 +135,7 @@
 
   function cleanText(t) {
     return t
+      .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')   // 보이지 않는 글자(폭 없는 공백 등)
       .replace(/\$\[\[\d+\]\]/g, '')
       .replace(/ /g, ' ')
       .split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter((l, i, a) => l || (i > 0 && a[i - 1]))
@@ -273,7 +293,7 @@
       const isWhisper = cls.contains('whisper');
 
       if (by && !isWhisper) {
-        curName = by.textContent.replace(/:\s*$/, '').trim();
+        curName = by.textContent.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/:\s*$/, '').trim();
         curAvatar = av ? av.getAttribute('src') : null;
         // 로그를 내보낸 사람: 'you' 표시가 붙은 메시지를 플레이어 이름으로 보낸 사람
         if (!exporter && cls.contains('you') && curAvatar && curAvatar.startsWith('/users/avatar/')) exporter = curName.replace(/\s*\(GM\)\s*$/, '').trim();
@@ -313,13 +333,16 @@
       }
 
       const acc = walk(body, { text: '', rolls: [], cutins: [] });
-      const gray = !!m.querySelector(':scope > span[style*="aaaaaa"]');
+      // 회색 글자(사담): 메시지 글의 대부분이 회색일 때만 (스탯 변화 '0 → 1'처럼 일부만 회색인 건 아님)
+      const grayLen = Array.from(m.querySelectorAll(':scope > span[style*="aaaaaa"]')).reduce((a, x) => a + x.textContent.trim().length, 0);
+      const gray = grayLen > 0 && grayLen >= cleanText(body.textContent).length * 0.6;
       const onlyRolls = acc.rolls.length && cleanText(acc.text.replace(/\u0000R\d+\u0000/g, '')) === '';
       const text = cleanText(renderRolls(acc.text, acc.rolls));
 
+      const withImgs = (e) => { if (acc.imgs && acc.imgs.length && /\(그림\)/.test(e.text)) e.imgs = acc.imgs; return e; };
       if (isDesc || isEmote) {
         if (!text && !acc.cutins.length) { stats.skipped++; return; }
-        entries.push({ ...base, kind: isDesc ? 'narration' : 'system', speaker: null, text: text || acc.cutins.join(' · ') });
+        entries.push(withImgs({ ...base, kind: isDesc ? 'narration' : 'system', speaker: null, text: text || acc.cutins.join(' · ') }));
         return;
       }
 
@@ -343,7 +366,7 @@
       }
       if (!text) { if (!acc.cutins.length) stats.skipped++; return; }
       if (sp) sp.count++;
-      const e = { ...base, kind: 'talk', speaker: sp ? sp.key : null, text };
+      const e = withImgs({ ...base, kind: 'talk', speaker: sp ? sp.key : null, text });
       if (gray) e.gray = true;
       if (!by) { e.noName = true; if (cls.contains('you')) e.you = true; }   // 이름이 빠진 줄 (앞사람 이름을 이어받은 것)
       entries.push(e);

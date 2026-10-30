@@ -16,7 +16,8 @@
     ['system', '진행 표시'], ['scene', '장면 제목'], ['meta', '회차 카드 (숨김)'], ['whisper', '귓속말 (숨김)'],
   ];
   const KIND_NAME = Object.fromEntries(KIND_OPTS.map(([k, v]) => [k, v.replace(/ \(숨김\)/, '')]));
-  const ROLE_OPTS = [['pc', 'PC'], ['npc', 'NPC'], ['gm', 'GM'], ['pl', '플레이어']];
+  const SAY_NAME = { act: '지문', thought: '생각', speech: '말' };
+  const ROLE_OPTS = [['pc', 'PC'], ['npc', 'NPC'], ['enemy', '에너미'], ['gm', 'GM'], ['pl', '플레이어']];
 
   const E = (SL.editor = {
     active: false,
@@ -187,6 +188,8 @@
     const flags = el('span', 'er-flags');
     if (e.created) flags.append(el('span', 'flag', '새 줄'));
     else if (e.orig != null && e.orig !== e.text) { const f = el('span', 'flag', '수정됨'); f.title = '원문: ' + e.orig; flags.append(f); }
+    if (e.say && e.kind === 'dialogue') { const f = el('span', 'flag', SAY_NAME[e.say] + ' 고정'); f.title = '표시 방식을 직접 정한 줄 (⋯ 메뉴 → 표시 방식)'; flags.append(f); }
+    if (e.nvHide) { const f = el('span', 'flag', '노벨 숨김'); f.title = '노벨 보기에서는 건너뛰어요. 채팅 로그에는 그대로 보여요.'; flags.append(f); }
     if (e.uncertain) { const f = el('span', 'flag warn', '화자 확인'); f.title = '나레이션 바로 뒤에 이름 없이 온 줄이라 말한 사람이 애매해요. 확인 후 말한 사람을 정하면 사라져요.'; flags.append(f); }
 
     const more = el('button', 'er-more', '⋯'); more.type = 'button'; more.setAttribute('aria-label', '이 줄 메뉴');
@@ -355,8 +358,10 @@
     $('bulkCount').textContent = `${n.toLocaleString()}줄 선택`;
     $('bulkMove').textContent = E.moving ? '옮기기 취소' : '옮기기';
     $('bulkMove').hidden = E.trash;
-    $('bulkKind').hidden = E.trash; $('bulkWho').hidden = E.trash; $('bulkDelete').hidden = E.trash;
+    $('bulkKind').hidden = E.trash; $('bulkWho').hidden = E.trash; $('bulkDelete').hidden = E.trash; $('bulkNovel').hidden = E.trash;
     $('bulkRestore').hidden = !E.trash;
+    const allHidden = Array.from(E.sel).every((id) => { const x = store.byId.get(id); return x && x.nvHide; });
+    $('bulkNovel').textContent = allHidden ? '노벨에 다시 보이기' : '노벨 숨김';
   }
 
   // ── 순서값 · 자리 정하기 ─────────────────
@@ -548,7 +553,17 @@
       items.push('-', { label: '카드 이름표 바꾸기', run: () => askDiceLabel([e.id]) }, { label: '판정 결과 바꾸기', run: () => resultMenu(btn, e) });
     }
     if (e.orig != null && e.orig !== e.text) items.push('-', { label: '원문으로 되돌리기', hint: e.orig.slice(0, 40), run: () => store.commit('원문으로', { entries: [Object.assign(clone(e), { text: e.orig })] }) });
-    items.push('-', { label: '링크 복사', run: () => copy(location.href.split('#')[0] + '#' + e.id) });
+    if (e.kind === 'dialogue') {
+      const cur = e.say || '';
+      items.push('-', { heading: '표시 방식' });
+      [['', '자동 (괄호·작은따옴표로 판단)'], ['act', '지문'], ['thought', '생각'], ['speech', '말 (괄호가 있어도 그냥 말)']].forEach(([v, l]) => {
+        items.push({ label: (cur === v ? '✓ ' : '　') + l, run: () => setSay([e.id], v) });
+      });
+    }
+    items.push('-', e.nvHide
+      ? { label: '노벨 보기에 다시 보이기', run: () => setNovelHide([e.id], false) }
+      : { label: '노벨 보기에서 숨기기', hint: '채팅 로그에는 그대로 보여요', run: () => setNovelHide([e.id], true) });
+    items.push({ label: '링크 복사', run: () => copy(location.href.split('#')[0] + '#' + e.id) });
     items.push({ label: '휴지통으로', danger: true, run: () => trash([e.id]) });
     openMenu(btn, items);
   }
@@ -623,6 +638,18 @@
     A.toast(`${ids.length}줄을 휴지통으로 옮겼어요`, { label: '되돌리기', run: () => store.undo() });
     updateBulk();
   }
+  // 대사 표시 방식 고정: 'act' 지문 · 'thought' 생각 · 'speech' 말 · '' 자동
+  function setSay(ids, v) {
+    const ch = ids.map((id) => { const n = clone(store.byId.get(id)); if (v) n.say = v; else delete n.say; return n; });
+    store.commit(v ? `표시 방식: ${SAY_NAME[v]}` : '표시 방식: 자동', { entries: ch });
+  }
+  // 노벨 보기에서 숨기기/보이기 (채팅 로그는 그대로)
+  function setNovelHide(ids, on) {
+    const ch = ids.map((id) => { const n = clone(store.byId.get(id)); if (on) n.nvHide = true; else delete n.nvHide; return n; });
+    store.commit(on ? `${ids.length}줄 노벨에서 숨김` : `${ids.length}줄 노벨에 보이기`, { entries: ch });
+    A.toast(on ? `${ids.length}줄을 노벨 보기에서 숨겼어요` : `${ids.length}줄을 노벨 보기에 다시 보여요`, { label: '되돌리기', run: () => store.undo() });
+    updateBulk();
+  }
   function restore(ids) {
     const ch = ids.map((id) => { const n = clone(store.byId.get(id)); delete n.deleted; return n; });
     ids.forEach((id) => E.sel.delete(id));
@@ -691,6 +718,13 @@
     const spellTypes = Array.from(new Set(b.entries.filter((e) => e.kind === 'dice' && e.dice && e.dice.spellType).map((e) => e.dice.spellType)));
     const labelFields = [['roll', L.roll], ['check', L.check]].concat(spellTypes.map((t) => ['spell:' + t, t]), [['equip', L.equip], ['table', L.table], ['pick', L.pick]])
       .map(([k, def]) => ({ id: 'dl-' + k.replace(/[^a-z0-9]/gi, '_'), key: k, label: `카드 이름표: ${def}`, value: labels[k] || '', placeholder: def, max: 16, group: '주사위 카드 기본 이름표' }));
+    // 목록에 보일 대표 NPC: 에너미가 아닌 NPC를 대사 많은 순으로. 비우면 자동(가장 많은 사람)
+    const lines = new Map();
+    b.entries.forEach((e) => { if (e.kind === 'dialogue' && !e.deleted && e.speaker) lines.set(e.speaker, (lines.get(e.speaker) || 0) + 1); });
+    const friends = b.speakers.filter((s) => s.role === 'npc' && !s.enemy && lines.get(s.id)).sort((x, y) => lines.get(y.id) - lines.get(x.id));
+    const leadOpts = [['', friends.length ? `자동: 대사가 가장 많은 NPC (지금은 ${friends[0].name})` : '자동 (대사가 있는 NPC가 아직 없어요)']]
+      .concat(friends.map((s) => [s.id, `${s.name} · 대사 ${lines.get(s.id).toLocaleString()}줄`]));
+    const leadNow = b.leadNpc && friends.some((s) => s.id === b.leadNpc) ? b.leadNpc : '';
     ask({
       title: '기록 정보', note: '제목·GM·PL·기간은 위쪽 머리말에 나와요.',
       fields: [
@@ -701,18 +735,19 @@
         { id: 'bi-pl', label: 'PL (쉼표로 구분)', value: (b.players || []).join(', '), max: 200 },
         { id: 'bi-start', label: '시작일', type: 'date', value: (b.period && b.period.start) || '' },
         { id: 'bi-end', label: '종료일', type: 'date', value: (b.period && b.period.end) || '' },
+        { id: 'bi-lead', label: '목록의 대표 NPC', type: 'select', value: leadNow, options: leadOpts },
       ].concat(labelFields),
       ok: '저장',
-      extra: [{ label: '원본 로그로 화자 규칙 다시 적용…', run: reapplyRules }],
+      extra: [{ label: '원본 로그로 다시 맞추기…', run: reapplyRules }],
       run: (v) => {
         const dl = {};
         const [vis, ...w] = v;
-        labelFields.forEach((f, i) => { const x = w[6 + i].trim(); if (x) dl[f.key] = x; });
+        labelFields.forEach((f, i) => { const x = w[7 + i].trim(); if (x) dl[f.key] = x; });
         store.commit('기록 정보', { book: {
           visibility: vis,
           title: w[0].trim() || b.title, system: w[1].trim() || null, gm: w[2].trim() || null,
           players: w[3].split(',').map((x) => x.trim()).filter(Boolean),
-          period: { start: w[4] || null, end: w[5] || null }, diceLabels: dl,
+          period: { start: w[4] || null, end: w[5] || null }, diceLabels: dl, leadNpc: w[6] || null,
         } });
       },
     });
@@ -724,7 +759,9 @@
     const name = el('input'); name.id = 'pn-' + s.id; name.value = s.name; name.maxLength = 40; name.setAttribute('aria-label', '표시 이름');
     name.addEventListener('change', () => { const v = name.value.trim(); if (!v || v === s.name) { name.value = s.name; return; } store.commit(`이름 '${v}'`, { speakers: [Object.assign(clone(s), { name: v })] }); });
     const role = el('select'); role.id = 'pr-' + s.id; role.setAttribute('aria-label', '역할');
-    ROLE_OPTS.forEach(([k, v]) => { const o = el('option', null, v); o.value = k; o.selected = s.role === k; role.append(o); });
+    const cur = s.role === 'npc' && s.enemy ? 'enemy' : s.role;
+    ROLE_OPTS.forEach(([k, v]) => { const o = el('option', null, v); o.value = k; o.selected = cur === k; role.append(o); });
+    role.title = '에너미: 금서·단장처럼 적으로 나오는 NPC. 기록 목록의 대표 NPC에서 빠져요.';
     role.addEventListener('change', () => changeRole(s, role.value));
     box.append(name, role);
     if (s.role === 'pc' || s.role === 'npc') {
@@ -755,8 +792,11 @@
     }
     return box;
   };
-  function changeRole(s, role) {
-    store.commit(`${s.name} 역할`, { speakers: [Object.assign(clone(s), { role })] });
+  function changeRole(s, pick) {
+    const role = pick === 'enemy' ? 'npc' : pick;
+    const next = Object.assign(clone(s), { role });
+    if (pick === 'enemy') next.enemy = true; else delete next.enemy;
+    store.commit(`${s.name} 역할`, { speakers: [next] });
     const want = role === 'pc' || role === 'npc' ? 'dialogue' : 'chat';
     const lines = store.book.entries.filter((e) => e.speaker === s.id && (e.kind === 'dialogue' || e.kind === 'chat') && e.kind !== want);
     if (lines.length) {
@@ -860,36 +900,171 @@
       if (o.kind === 'system' || o.kind === 'meta' || !o.src) return;   // 컷인 진행 표시는 같은 메시지 ID를 나눠 씀
       bySrc.set(o.src, { o, n: after.entries[i] });
     });
+    // 같은 메시지에서 나온 줄이 여럿(긴 글 나눔 등)이면 글은 건드리지 않음
+    const srcCount = (list) => { const c = new Map(); list.forEach((x) => { if (x.src) c.set(x.src, (c.get(x.src) || 0) + 1); }); return c; };
+    const nowCount = srcCount(store.book.entries); const newCount = srcCount(after.entries);
     const withSrc = store.book.entries.filter((e) => e.src && e.kind !== 'system' && e.kind !== 'meta');
-    let matched = 0; let kept = 0;
-    const changes = [];
+    let matched = 0; let kept = 0; let nSpk = 0; let nText = 0; let nImg = 0;
+    const changes = new Map();
+    const get = (e) => changes.get(e.id) || clone(e);
+    const PH = /\(그림\)/g;
     withSrc.forEach((e) => {
       const m = bySrc.get(e.src); if (!m) return;
       matched++;
       const { o, n } = m;
-      if (o.speaker === n.speaker && !!o.uncertain === !!n.uncertain) return;   // 규칙이 바꾸지 않는 줄
-      if ((e.speaker || null) !== (o.speaker || null)) { kept++; return; }      // 말한 사람을 직접 고친 줄
-      const c = clone(e);
-      c.speaker = n.speaker;
-      if (e.kind === o.kind) c.kind = n.kind;
-      if (n.uncertain) c.uncertain = true; else delete c.uncertain;
-      changes.push(c);
+      // 1) 말한 사람: 규칙이 바꾸는 줄 중 직접 고치지 않은 줄만
+      if (o.speaker !== n.speaker || !!o.uncertain !== !!n.uncertain) {
+        if ((e.speaker || null) !== (o.speaker || null)) kept++;
+        else {
+          const c = get(e);
+          c.speaker = n.speaker;
+          if (e.kind === o.kind) c.kind = n.kind;
+          if (n.uncertain) c.uncertain = true; else delete c.uncertain;
+          changes.set(e.id, c); nSpk++;
+        }
+      }
+      if (nowCount.get(e.src) !== 1 || newCount.get(e.src) !== 1 || e.kind === 'dice') return;
+      // 2) 글 정리: 한 번도 고치지 않은 줄만 새 가져오기 결과로 (군더더기 링크 글자 빼기, 굵게·기울임 등)
+      if (e.orig == null && !e.created && !e.deleted && n.text !== e.text && n.text) {
+        const c = get(e); c.text = n.text; if (n.imgs) c.imgs = n.imgs; changes.set(e.id, c); nText++;
+      }
+      // 3) 그림 주소: '(그림)' 자리 수가 맞으면 주소를 붙임 (그림 목록에서 보고 글로 바꿀 수 있게)
+      const cur = changes.get(e.id) || e;
+      const holes = (cur.text.match(PH) || []).length;
+      if (!cur.imgs && n.imgs && holes && holes === n.imgs.length) { const c = get(e); c.imgs = n.imgs; changes.set(e.id, c); nImg++; }
     });
     if (!withSrc.length || matched < withSrc.length * 0.5) {
       A.toast('이 기록을 가져온 원본 로그가 아닌 것 같아요. 같은 Roll20 파일을 골라 주세요.');
       return;
     }
-    if (!changes.length) { A.toast(kept ? `바꿀 줄이 없어요 (직접 고친 ${kept}줄은 그대로)` : '이미 새 규칙대로예요. 바꿀 줄이 없어요.'); return; }
+    const list = Array.from(changes.values());
+    if (!list.length) { A.toast(kept ? `바꿀 줄이 없어요 (직접 고친 ${kept}줄은 그대로)` : '이미 원본과 맞아요. 바꿀 줄이 없어요.'); return; }
+    const parts = [];
+    if (nSpk) parts.push(`말한 사람 ${nSpk.toLocaleString()}줄 (이름이 빠진 사담 → 알 수 없음 등)`);
+    if (nText) parts.push(`글 정리 ${nText.toLocaleString()}줄 (군더더기 글자 빼기, 굵게·기울임 살리기 — 직접 고친 적 없는 줄만)`);
+    if (nImg) parts.push(`그림 주소 ${nImg.toLocaleString()}줄 ('그림 목록'에서 보고 글로 바꿀 수 있게)`);
     ask({
-      title: '원본 로그로 화자 규칙 다시 적용',
-      note: `이름이 빠진 사담 등 ${changes.length.toLocaleString()}줄의 말한 사람이 바뀌어요.` +
-        (kept ? ` 말한 사람을 이미 직접 고친 ${kept.toLocaleString()}줄은 그대로 둬요.` : '') + ' 적용한 뒤 되돌리기로 한 번에 취소할 수 있어요.',
-      fields: [], ok: `${changes.length.toLocaleString()}줄 적용`,
+      title: '원본 로그로 다시 맞추기',
+      note: parts.join(' · ') + '이 바뀌어요.' + (kept ? ` 말한 사람을 직접 고친 ${kept.toLocaleString()}줄은 그대로 둬요.` : '') + ' 적용한 뒤 되돌리기로 한 번에 취소할 수 있어요.',
+      fields: [], ok: `${list.length.toLocaleString()}줄 적용`,
       run: () => {
-        store.commit(`화자 규칙 다시 적용 (${changes.length}줄)`, { entries: changes });
-        A.toast(`${changes.length.toLocaleString()}줄에 새 규칙을 적용했어요`, { label: '되돌리기', run: () => store.undo() });
+        store.commit(`원본 로그로 다시 맞추기 (${list.length}줄)`, { entries: list });
+        A.toast(`${list.length.toLocaleString()}줄을 원본에 맞췄어요`, { label: '되돌리기', run: () => store.undo() });
+        const im = $('imgs'); if (im && !im.hidden) openImages();
       },
     });
+  }
+
+  // ── 그림 목록: 로그 속 그림을 보고 글로 바꾸거나, 그림만 있는 줄을 휴지통으로 ──
+  // 같은 그림(주소)이 여러 줄에 나오면 한꺼번에. 그림은 원래 주소(imgur·Roll20)에서 바로 보여 줌 (저장하지 않음)
+  function imageGroups() {
+    const groups = new Map();
+    let missing = 0;
+    store.book.entries.forEach((e) => {
+      if (e.deleted) return;
+      const holes = (e.text || '').match(/\(그림\)/g);
+      if (!e.imgs || !e.imgs.length) { if (holes) missing += holes.length; return; }
+      e.imgs.forEach((im, k) => {
+        const key = im.src || 'alt:' + (im.alt || '') + ':' + e.id;
+        let g = groups.get(key);
+        if (!g) { g = { src: im.src, alt: im.alt, uses: [] }; groups.set(key, g); }
+        g.uses.push({ e, k });
+      });
+    });
+    return { groups: Array.from(groups.values()), missing };
+  }
+  function openImages() {
+    const back = $('imgs') || makeImgSheet();
+    const body = $('imgsBody'); body.replaceChildren();
+    const { groups, missing } = imageGroups();
+    const total = groups.reduce((a, g) => a + g.uses.length, 0);
+    $('imgsNote').textContent = groups.length
+      ? `그림 ${total.toLocaleString()}개 (서로 다른 그림 ${groups.length.toLocaleString()}개). 그림을 보고 글을 적으면 그 그림이 나온 모든 줄의 '(그림)' 자리에 들어가요. 그림은 원래 주소에서 불러와 보여 줄 뿐 저장하지 않아요.`
+      : '그림 주소가 있는 줄이 없어요.';
+    if (missing) {
+      const box = el('div', 'img-missing');
+      box.append(el('p', null, `주소를 모르는 '(그림)'이 ${missing.toLocaleString()}개 있어요. 예전에 가져온 기록이면 원본 Roll20 로그를 다시 골라 주소를 찾을 수 있어요.`));
+      const b = el('button', 'btn-sm', '원본 로그에서 그림 주소 찾기…'); b.type = 'button';
+      b.addEventListener('click', reapplyRules);
+      box.append(b); body.append(box);
+    }
+    groups.forEach((g, gi) => body.append(imageRow(g, gi)));
+    if (back.hidden) { back.hidden = false; $('imgsClose').focus(); }
+  }
+  function makeImgSheet() {
+    const back = el('div', 'sheet-backdrop'); back.id = 'imgs'; back.hidden = true;
+    const sh = el('div', 'sheet sheet-wide'); sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-modal', 'true'); sh.setAttribute('aria-labelledby', 'imgsTitle');
+    const head = el('div', 'sheet-head'); const h = el('h2', null, '그림 목록'); h.id = 'imgsTitle';
+    const x = el('button', 'icon-btn', '✕'); x.type = 'button'; x.id = 'imgsClose'; x.setAttribute('aria-label', '닫기');
+    x.addEventListener('click', () => { back.hidden = true; });
+    head.append(h, x);
+    const note = el('p', 'sheet-note'); note.id = 'imgsNote';
+    const body = el('div', 'img-list'); body.id = 'imgsBody';
+    sh.append(head, note, body); back.append(sh);
+    back.addEventListener('click', (ev) => { if (ev.target === back) back.hidden = true; });
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !back.hidden) back.hidden = true; });
+    document.body.append(back);
+    return back;
+  }
+  function imageRow(g, gi) {
+    const row = el('div', 'img-row'); row.dataset.src = g.src || '';
+    const th = el('div', 'img-thumb');
+    if (g.src) {
+      const a = el('a'); a.href = g.src; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = '원래 크기로 보기 (새 탭)';
+      const img = el('img'); img.src = g.src; img.alt = g.alt && !/^(img|image|그림|이미지)$/i.test(g.alt) ? g.alt : '로그 속 그림'; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => {
+        const l = el('a', 'small', '불러오지 못했어요 · 새 탭에서 열기'); l.href = g.src; l.target = '_blank'; l.rel = 'noopener noreferrer';
+        th.replaceChildren(l);
+      }, { once: true });
+      a.append(img); th.append(a);
+    } else th.append(el('span', 'muted small', '주소 없음'));
+    const info = el('div', 'img-info');
+    const first = g.uses[0].e;
+    const who = first.speaker ? (store.spk.get(first.speaker) || {}).name : KIND_NAME[first.kind];
+    const where = el('p', 'img-where');
+    where.append(el('b', null, `${g.uses.length}곳`), document.createTextNode(` · 처음: ${A.sessionLabel(A.sessionOf(first.session))} · ${who || ''}`));
+    if (g.alt && !/^(img|image|그림|이미지)$/i.test(g.alt)) where.append(document.createTextNode(` · 설명 '${g.alt}'`));
+    const go = el('button', 'linkish', '그 줄로'); go.type = 'button';
+    go.addEventListener('click', () => { $('imgs').hidden = true; const n = document.getElementById(first.id); if (n) { n.scrollIntoView({ block: 'center' }); n.classList.add('is-target'); } });
+    where.append(document.createTextNode(' '), go);
+    const ctx = el('p', 'img-ctx'); ctx.textContent = first.text.length > 90 ? first.text.slice(0, 90) + '…' : first.text;
+    const form = el('form', 'img-form');
+    const inp = el('input'); inp.id = 'imgTxt-' + gi; inp.placeholder = "그림 대신 넣을 글 (예: [지도] 제헤스트 시내)"; inp.maxLength = 500;
+    inp.setAttribute('aria-label', '그림 대신 넣을 글');
+    const ok = el('button', 'btn-sm primary', '글로 바꾸기'); ok.type = 'submit';
+    form.append(inp, ok);
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); const v = inp.value.trim(); if (!v) { inp.focus(); return; } replaceImage(g, v); });
+    info.append(where, ctx, form);
+    const onlyImg = g.uses.filter(({ e }) => e.text.trim() === '(그림)');
+    if (onlyImg.length) {
+      const del = el('button', 'btn-sm danger', `그림만 있는 줄 ${onlyImg.length}개 휴지통으로`); del.type = 'button';
+      del.addEventListener('click', () => {
+        const ch = onlyImg.map(({ e }) => Object.assign(clone(e), { deleted: true }));
+        store.commit(`그림 줄 휴지통으로 (${ch.length}줄)`, { entries: ch });
+        A.toast(`${ch.length}줄을 휴지통으로 옮겼어요`, { label: '되돌리기', run: () => { store.undo(); openImages(); } });
+        openImages();
+      });
+      info.append(del);
+    }
+    row.append(th, info);
+    return row;
+  }
+  function replaceImage(g, text) {
+    const byE = new Map();
+    g.uses.forEach(({ e, k }) => { if (!byE.has(e.id)) byE.set(e.id, new Set()); byE.get(e.id).add(k); });
+    const ch = [];
+    byE.forEach((ks, id) => {
+      const e = store.byId.get(id); const n = clone(e);
+      let occ = -1;
+      n.text = e.text.replace(/\(그림\)/g, (m0) => { occ++; return ks.has(occ) ? text : m0; });
+      n.imgs = (e.imgs || []).filter((_, k) => !ks.has(k));
+      if (!n.imgs.length) delete n.imgs;
+      if (n.orig == null && !n.created) n.orig = e.text;   // '원문으로 되돌리기' 가능하게
+      ch.push(n);
+    });
+    store.commit(`그림 → 글 (${ch.length}줄)`, { entries: ch });
+    A.toast(`${ch.length}줄의 그림을 글로 바꿨어요`, { label: '되돌리기', run: () => { store.undo(); openImages(); } });
+    openImages();
   }
 
   function copy(text) {
@@ -908,6 +1083,7 @@
     $('ePeople').addEventListener('click', A.openPeople);
     $('eDelete').addEventListener('click', deleteBook);
     $('eBook').addEventListener('click', openBookInfo);
+    $('eImages').addEventListener('click', openImages);
     let armed = 0;
     $('eReset').addEventListener('click', () => {
       if (!armed) { $('eReset').textContent = '정말 모두 지울까요? 한 번 더'; armed = setTimeout(() => { armed = 0; $('eReset').textContent = '수정 모두 지우기'; }, 3500); return; }
@@ -919,6 +1095,7 @@
     $('bulkWho').addEventListener('click', (ev) => { ev.stopPropagation(); speakerMenu($('bulkWho'), selectedInOrder()); });
     $('bulkMove').addEventListener('click', () => setMoving(!E.moving));
     $('bulkDelete').addEventListener('click', () => trash(selectedInOrder()));
+    $('bulkNovel').addEventListener('click', () => { const ids = selectedInOrder(); setNovelHide(ids, !ids.every((id) => store.byId.get(id).nvHide)); });
     $('bulkRestore').addEventListener('click', () => restore(selectedInOrder()));
     $('bulkClear').addEventListener('click', clearSel);
 

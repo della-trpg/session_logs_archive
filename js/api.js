@@ -75,7 +75,9 @@
     return e;
   }
   function speakerFromRow(r) {
-    return { id: r.id, name: r.name, role: r.role, player: r.player_id, color: r.color || '#7d8a96', charId: r.char_id, image: r.image_path };
+    const s = { id: r.id, name: r.name, role: r.role, player: r.player_id, color: r.color || '#7d8a96', charId: r.char_id, image: r.image_path };
+    if (r.enemy) s.enemy = true;
+    return s;
   }
 
   // ====================================================================
@@ -159,27 +161,31 @@
     // ── 기록 ──
     async listBooks(world) {
       const { data, error } = await this.sb.from('log_books')
-        .select('id, title, system, gm, players, period_start, period_end, visibility, updated_at, sort_order')
+        .select('*')   // lead_npc 등 새 칸이 아직 없는 서버도 그대로 동작
         .eq('world_id', world).order('sort_order', { ascending: true }).order('period_start', { ascending: false, nullsFirst: false });
       if (error) throw new ApiError(error);
       const ids = (data || []).map((b) => b.id);
       const counts = new Map();
       const chars = new Map();
       if (ids.length) {
-        const [{ data: ss }, { data: sp }] = await Promise.all([
+        const [{ data: ss }, { data: sp }, cast] = await Promise.all([
           this.sb.from('log_sessions').select('book_id, no').in('book_id', ids),
-          this.sb.from('log_speakers').select('book_id, name, role, char_id').in('book_id', ids),
+          this.sb.from('log_speakers').select('*').in('book_id', ids),   // '*': enemy 칸이 아직 없는 서버도 그대로 동작
+          this.sb.rpc('log_list_cast', { p_books: ids }),                // SQL을 다시 실행하기 전이면 실패 → 줄 수 없이
         ]);
+        const lines = new Map();
+        if (cast && !cast.error) (cast.data || []).forEach((r) => lines.set(r.book_id + '/' + r.speaker_id, r.n));
         (ss || []).forEach((s) => { if (s.no > 0) counts.set(s.book_id, (counts.get(s.book_id) || 0) + 1); });
         (sp || []).forEach((s) => {
           if (s.role !== 'pc' && s.role !== 'npc') return;
           if (!chars.has(s.book_id)) chars.set(s.book_id, []);
-          chars.get(s.book_id).push({ key: s.char_id || s.name, name: s.name, role: s.role });
+          chars.get(s.book_id).push({ id: s.id, key: s.char_id || s.name, name: s.name, role: s.role, enemy: !!s.enemy,
+            lines: cast && !cast.error ? lines.get(s.book_id + '/' + s.id) || 0 : null });
         });
       }
       return (data || []).map((b) => ({ id: b.id, title: b.title, system: b.system, gm: b.gm, players: b.players || [],
         period: { start: b.period_start, end: b.period_end }, visibility: b.visibility, sessions: counts.get(b.id) || 0,
-        chars: chars.get(b.id) || [], updatedAt: b.updated_at }));
+        chars: chars.get(b.id) || [], leadNpc: b.lead_npc || null, updatedAt: b.updated_at }));
     }
 
     async loadBook(id, { admin } = {}) {
@@ -202,6 +208,7 @@
       const book = {
         title: b.title, system: b.system, gm: b.gm, players: b.players || [],
         period: { start: b.period_start, end: b.period_end }, diceLabels: b.dice_labels || {}, visibility: b.visibility,
+        leadNpc: b.lead_npc || null,
         sessions: (ss.data || []).map((s) => ({ no: s.no, title: s.title, date: s.date })),
         speakers: (sp.data || []).map(speakerFromRow),
         entries: rows.map((r) => entryFromRow(r, origs.get(r.id))),
@@ -293,13 +300,19 @@
       const b = await this.base();
       const chars = (bk, edits) => {
         const sp = bk.speakers.map((s) => (edits && edits.speakers && edits.speakers[s.id]) || s);
-        return sp.filter((s) => s.role === 'pc' || s.role === 'npc').map((s) => ({ key: s.charId || s.name, name: s.name, role: s.role }));
+        const n = new Map();
+        bk.entries.forEach((e0) => {
+          const e = edits && edits.entries && Object.prototype.hasOwnProperty.call(edits.entries, e0.id) ? edits.entries[e0.id] : e0;
+          if (e && e.kind === 'dialogue' && !e.deleted && e.speaker) n.set(e.speaker, (n.get(e.speaker) || 0) + 1);
+        });
+        return sp.filter((s) => s.role === 'pc' || s.role === 'npc')
+          .map((s) => ({ id: s.id, key: s.charId || s.name, name: s.name, role: s.role, enemy: !!s.enemy, lines: n.get(s.id) || 0 }));
       };
       const meta = (id, bk) => {
         const ed = lsGet('sl:edits:' + id) || {};   // 데모에서 고친 제목 등도 목록에 반영
         const x = Object.assign({}, bk, ed.book || {});
         return { id, title: x.title, system: x.system, gm: x.gm, players: x.players, period: x.period, visibility: x.visibility || 'draft',
-          sessions: bk.sessions.filter((s) => s.no > 0).length, chars: chars(bk, ed), updatedAt: null };
+          sessions: bk.sessions.filter((s) => s.no > 0).length, chars: chars(bk, ed), leadNpc: x.leadNpc || null, updatedAt: null };
       };
       const list = [Object.assign(meta('demo', b), { visibility: 'public' })];
       this.imported().forEach((x) => list.push(meta(x.id, x.book)));

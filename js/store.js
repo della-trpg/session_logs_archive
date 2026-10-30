@@ -11,7 +11,7 @@
   'use strict';
   const SL = (g.SL = g.SL || {});
   const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
-  const BOOK_FIELDS = ['title', 'system', 'gm', 'players', 'period', 'diceLabels', 'visibility'];
+  const BOOK_FIELDS = ['title', 'system', 'gm', 'players', 'period', 'diceLabels', 'visibility', 'leadNpc'];
 
   function Store() {
     this.book = null;

@@ -15,10 +15,15 @@
 
   const DATE_LINE = /^(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})\.?$/;
   const CARD_LINE = /(세션\s*시작|^GM\s*[:：]|^PL\s*[:：])/i;
+  // 회차 시작 카드에 흔히 들어가는 줄들 (날짜 줄 앞뒤)
+  const SEPARATOR = /^[\s─━—―\-=~_·•∙✷✦✧★☆◆◇♦◈❖※*+⁂…]{3,}$/;      // 장식 구분선
+  const ROLE_LINE = /^(GM|PL|PC|NPC|KP)\s*[:：]?\s+\S/i;              // 'GM 델핀', 'PC 사서·문호 클로엘'
+  const SUBTITLE = /(수록|시나리오\s*집|시나리오\s*:|^시나리오\b|^SCENARIO\b)/i;
   const SCENE_LINES = [
     /^\d+\s*사이클\s*(\d+\s*번째\s*)?장면\s*\d*$/,
+    /^\d+\s*사이클$/,
     /^마스터\s*씬$/,
-    /^(프롤로그|오프닝|도입|클라이맥스|에필로그|엔딩)$/,
+    /^(프롤로그|오프닝|도입|클라이맥스|에필로그|엔딩)(\s*(페이즈|씬|장면))?$/,
     /^제\s*\d+\s*시합$/,
   ];
 
@@ -66,7 +71,8 @@
     let ci = 0; let pi = 0;
     const speakers = raw.speakers.map((s, i) => {
       const c = scfg[s.key] || {};
-      const role = c.role || s.guess || 'pc';
+      const enemy = c.role === 'enemy';                // 화면에서 고르는 '에너미' = NPC + enemy 표시
+      const role = enemy ? 'npc' : c.role || s.guess || 'pc';
       const isChar = role === 'pc' || role === 'npc';
       return {
         id: 'p' + (i + 1),
@@ -78,6 +84,7 @@
         charId: c.charId || null,                  // 사분면 world_characters.char_id
         image: c.image || null,
         srcAvatars: s.avatars,
+        ...(enemy ? { enemy: true } : {}),
       };
     });
     const byKey = new Map(speakers.map((s) => [s.key, s]));
@@ -106,6 +113,7 @@
       const out = { id: 'e' + (i + 1), seq: (i + 1) * 1000, session: 0, kind, speaker: sp ? sp.id : null,
         text: e.text || '', ts: e.ts, src: e.src };
       if (e.dice) out.dice = e.dice;
+      if (e.imgs) out.imgs = e.imgs;
       if (e.to) out.to = e.to;
       if (e.from) out.from = e.from;
       if (unsure) out.uncertain = true;
@@ -116,24 +124,38 @@
     const sessions = [{ no: 0, title: '준비', date: null }];
     let title = cfg.title || null; let gm = cfg.gm || null; let players = cfg.players || null;
     let cur = 0;
+    const isNarr = (x) => x && x.kind === 'narration';
+    const deco = (x) => isNarr(x) && (SEPARATOR.test(x.text.trim()) || x.text.trim() === '(그림)');
     entries.forEach((e, i) => {
       if (e.kind === 'narration') {
-        const m = e.text.match(DATE_LINE);
+        const m = e.text.trim().match(DATE_LINE);
         if (m) {
           cur = sessions.length;
           sessions.push({ no: cur, title: cur + '회차', date: `${m[1]}-${pad(m[2])}-${pad(m[3])}` });
           e.kind = 'meta';
-          // 바로 뒤 몇 줄의 시작 카드(제목·GM·PL·'세션 시작합니다')도 meta로
+          // 날짜 줄 바로 앞의 장식(구분선·제목 그림)도 새 회차의 시작 카드로
+          let opened = false;
+          for (let j = i - 1; j >= 0 && j >= i - 3 && deco(entries[j]); j--) { entries[j].kind = 'meta'; entries[j].session = cur; opened = true; }
+          // 바로 뒤의 시작 카드(제목·부제·GM·PL·PC·구분선·'세션 시작')도 meta로
           let seen = 0;
-          for (let j = i + 1; j < entries.length && j <= i + 8 && seen < 4; j++) {
+          for (let j = i + 1; j < entries.length && j <= i + 16 && seen < 12; j++) {
             const n = entries[j];
             if (n.kind !== 'narration') continue;
             seen++;
-            const t = n.text;
-            if (/^GM\s*[:：]/i.test(t)) { n.kind = 'meta'; gm = gm || t.replace(/^GM\s*[:：]\s*/i, ''); continue; }
-            if (/^PL\s*[:：]/i.test(t)) { n.kind = 'meta'; players = players || t.replace(/^PL\s*[:：]\s*/i, '').split(/\s*,\s*/); continue; }
-            if (CARD_LINE.test(t)) { n.kind = 'meta'; continue; }
-            if (cur === 1 && seen === 1 && t.length <= 30 && !/[.?!~]$/.test(t)) { n.kind = 'meta'; title = title || t; continue; }
+            const t = n.text.trim();
+            if (SEPARATOR.test(t)) { n.kind = 'meta'; if (opened && seen > 1) break; opened = true; continue; }   // 닫는 구분선에서 끝
+            if (t === '(그림)') { n.kind = 'meta'; continue; }
+            if (/^GM\s*[:：]?\s+\S/i.test(t) || /^GM\s*[:：]/i.test(t)) { n.kind = 'meta'; gm = gm || t.replace(/^GM\s*[:：]?\s*/i, ''); continue; }
+            if (/^PL\s*[:：]?\s+\S/i.test(t) || /^PL\s*[:：]/i.test(t)) {
+              n.kind = 'meta';
+              const v = t.replace(/^PL\s*[:：]?\s*/i, '');
+              players = players || (/[,，、]/.test(v) ? v.split(/\s*[,，、]\s*/) : v.split(/\s+/)).filter(Boolean);
+              continue;
+            }
+            if (ROLE_LINE.test(t) || CARD_LINE.test(t) || SUBTITLE.test(t)) { n.kind = 'meta'; continue; }
+            if (title && t === title) { n.kind = 'meta'; continue; }                     // 회차마다 다시 나오는 제목
+            if (cur === 1 && !title && t.length <= 30 && !/[.?!~]$/.test(t)) { n.kind = 'meta'; title = t; continue; }
+            if (opened) continue;   // 구분선으로 열린 카드 안: 닫는 구분선까지 계속 (모르는 줄은 그대로 나레이션)
             break;
           }
         }

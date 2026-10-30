@@ -335,8 +335,8 @@
 
     // 필터에 쓸 값들: 등장 인물(여러 기록에 나온 순), 룰
     const charMap = new Map();
-    books.forEach((b) => (b.chars || []).forEach((c) => {
-      const x = charMap.get(c.key) || { key: c.key, name: c.name, npc: c.role === 'npc', n: 0 };
+    books.forEach((b) => (b.chars || []).filter((c) => c.role === 'pc' && !c.enemy && c.lines !== 0).forEach((c) => {   // PC만, 대사가 한 줄도 없는 인물은 빼고
+      const x = charMap.get(c.key) || { key: c.key, name: c.name, npc: c.role === 'npc', enemy: !!c.enemy, n: 0 };
       x.n++; charMap.set(c.key, x);
     }));
     const allChars = Array.from(charMap.values()).sort((a, b) => (b.n - a.n) || a.name.localeCompare(b.name, 'ko'));
@@ -365,10 +365,10 @@
       }
       // 등장 인물
       if (allChars.length) {
-        const box = row('등장 인물');
+        const box = row('등장 PC');
         allChars.forEach((c) => {
           const on = LF.chars.has(c.key);
-          const b = el('button', 'chip lf-chip', c.name + (c.npc ? ' (NPC)' : '')); b.type = 'button'; b.setAttribute('aria-pressed', String(on));
+          const b = el('button', 'chip lf-chip', c.name + (c.enemy ? ' (에너미)' : c.npc ? ' (NPC)' : '')); b.type = 'button'; b.setAttribute('aria-pressed', String(on));
           if (books.length > 1) b.append(el('span', 'n', String(c.n)));
           b.addEventListener('click', () => { if (on) LF.chars.delete(c.key); else LF.chars.add(c.key); draw(); });
           box.append(b);
@@ -397,18 +397,38 @@
       [period(b.period), b.sessions ? `${b.sessions}회차` : '', b.gm ? `GM ${b.gm}` : '', (b.players || []).length ? `PL ${b.players.join(' · ')}` : '']
         .filter(Boolean).forEach((x, i) => { if (i) meta.append(el('span', 'sep', '·')); meta.append(el('span', null, x)); });
       c.append(meta);
-      const pcs = (b.chars || []).filter((x) => x.role === 'pc'); const npcs = (b.chars || []).filter((x) => x.role === 'npc');
-      if (pcs.length || npcs.length) {
-        const cast = el('span', 'book-card-cast');
-        cast.append(el('span', 'muted', '등장 '));
-        pcs.concat(npcs).forEach((x, i) => {
-          if (i) cast.append(document.createTextNode(' · '));
-          const n = el('span', LF.chars.has(x.key) ? 'hit' : null, x.name); cast.append(n);
-        });
-        c.append(cast);
-      }
+      const cast = castLine(b);
+      if (cast) c.append(cast);
       c.addEventListener('click', () => site.nav('?b=' + encodeURIComponent(b.id)));
       return c;
+    }
+
+    // 등장: PC는 모두, NPC는 대표 한 명 + '외 총 N명' (N = 대사가 있는 NPC 전체, 에너미 포함).
+    // 대표 = 기록 정보에서 고른 NPC, 안 골랐으면 대사가 가장 많은 NPC (에너미 제외).
+    // 마우스를 올리면 에너미가 아닌 NPC 이름 + '그 외 에너미 N명'
+    function castLine(b) {
+      const all = b.chars || [];
+      const spoke = (x) => x.lines == null || x.lines > 0;   // 줄 수를 모르면(서버 SQL 갱신 전) 모두
+      const pcs = all.filter((x) => x.role === 'pc' && !x.enemy && spoke(x));
+      const npcs = all.filter((x) => (x.role === 'npc' || x.enemy) && spoke(x));
+      if (!pcs.length && !npcs.length) return null;
+      const friends = npcs.filter((x) => !x.enemy).sort((a, c) => (c.lines || 0) - (a.lines || 0));
+      const enemies = npcs.length - friends.length;
+      const box = el('span', 'book-card-cast');
+      box.append(el('span', 'muted', '등장 '));
+      pcs.forEach((x, i) => { if (i) box.append(document.createTextNode(' · ')); box.append(el('span', LF.chars.has(x.key) ? 'hit' : null, x.name)); });
+      if (npcs.length) {
+        const top = (b.leadNpc && friends.find((x) => x.id === b.leadNpc)) || friends[0];
+        const seg = el('span', 'cast-npc');
+        seg.append(el('span', 'muted', 'NPC '));
+        if (top) seg.append(el('span', null, top.name));
+        if (npcs.length > (top ? 1 : 0)) seg.append(document.createTextNode(top ? ` 외 총 ${npcs.length}명` : `총 ${npcs.length}명`));
+        const tip = friends.map((x) => x.name).join(', ');
+        seg.title = [tip, enemies ? `그 외 에너미 ${enemies}명` : ''].filter(Boolean).join(' · ');
+        if (pcs.length) box.append(el('span', 'sep', ' | '));
+        box.append(seg);
+      }
+      return box;
     }
 
     function draw() {

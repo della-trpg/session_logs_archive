@@ -45,6 +45,7 @@
     showTime: prefs.get('showTime', false),
     size: prefs.get('size', 'm'),
     theme: prefs.get('theme', 'auto'),
+    castOpen: prefs.get('castOpen', false),
     q: '', marks: [], mi: -1,
   };
 
@@ -156,7 +157,12 @@
     if (b.players && b.players.length) meta.append(el('span', null, `PL ${b.players.join(' · ')}`));
 
     const cast = $('cast'); cast.replaceChildren();
-    const chars = b.speakers.filter((s) => s.role === 'pc').concat(b.speakers.filter((s) => s.role === 'npc'));
+    // PC는 늘 보이고, NPC(에너미 포함)는 'NPC n명' 단추로 펼치고 접음. 보고 있는 인물이 NPC면 펼친 채로
+    const pcs = b.speakers.filter((s) => s.role === 'pc');
+    const npcs = b.speakers.filter((s) => s.role === 'npc').sort((x, y) => (!!x.enemy - !!y.enemy));
+    const focusNpc = S.focus && npcs.some((s) => s.id === S.focus);
+    const open = S.castOpen || focusNpc;
+    const chars = pcs.concat(open ? npcs : []);
     chars.forEach((s) => {
       const li = el('li');
       const btn = el('button', 'cast-btn');
@@ -167,11 +173,19 @@
       const txt = el('span');
       const player = spk(s.player);
       txt.append(el('span', 'cast-name', s.name),
-        el('span', 'cast-sub', s.role === 'npc' ? 'NPC' : player ? `PL ${player.name}` : 'PL 미정'));
+        el('span', 'cast-sub', s.role === 'npc' ? (s.enemy ? '에너미' : 'NPC') : player ? `PL ${player.name}` : 'PL 미정'));
       btn.append(txt);
       btn.addEventListener('click', () => setFocus(S.focus === s.id ? null : s.id));
       li.append(btn); cast.append(li);
     });
+    if (npcs.length) {
+      const li = el('li');
+      const t = el('button', 'cast-more', open ? `NPC 접기 ▴` : `NPC ${npcs.length}명 ▾`); t.type = 'button';
+      t.setAttribute('aria-expanded', String(!!open));
+      t.disabled = !!focusNpc && open;   // 보고 있는 NPC가 있으면 접지 않음
+      t.addEventListener('click', () => { S.castOpen = !open; prefs.set('castOpen', S.castOpen); renderHead(); });
+      li.append(t); cast.append(li);
+    }
     const na = $('novelActs');
     if (na && SL.novel) na.replaceChildren(SL.novel.headActions());
   }
@@ -359,24 +373,65 @@
     if (i < text.length) node.append(document.createTextNode(text.slice(i)));
   }
 
-  // 대사 한 줄: '속마음', (지문), 나머지는 말
+  // ── 마크다운 서식: **굵게** *기울임* ~~취소선~~ (찾기 표시는 글 조각마다 그대로) ──
+  const MD = /\*\*([^*\n](?:[^\n]*?[^*\s])?)\*\*|~~([^~\n](?:[^\n]*?[^~\s])?)~~|\*([^*\s](?:[^*\n]*?[^*\s])?)\*/g;
+  function fmtInto(node, text, add) {
+    add = add || appendText;
+    let i = 0; let m;
+    MD.lastIndex = 0;
+    const parts = [];
+    while ((m = MD.exec(text))) {
+      // 기울임 '*'는 글자 바로 뒤에 붙은 별표(예: 2*3)는 서식으로 보지 않음
+      if (m[3] != null && m.index > 0 && /[\w*]/.test(text[m.index - 1])) continue;
+      parts.push([m.index, m[0].length, m[1] != null ? 'strong' : m[2] != null ? 's' : 'em', m[1] ?? m[2] ?? m[3]]);
+    }
+    parts.forEach(([at, len, tag, inner]) => {
+      if (at > i) add(node, text.slice(i, at));
+      const w = el(tag); fmtInto(w, inner, add); node.append(w);
+      i = at + len;
+    });
+    if (i < text.length) add(node, text.slice(i));
+  }
+  const stripMd = (t) => String(t || '').replace(MD, (m0, a, b, c) => a ?? b ?? c ?? m0);
+
+  // 대사 한 줄을 조각으로: (지문) — 괄호 안 괄호도 짝을 맞춰서 · '생각'(작은따옴표) · 나머지는 말
+  // say: 편집에서 고른 표시 방식 'act' | 'thought' | 'speech' (없으면 자동)
+  function sayParts(text, say) {
+    const t = String(text || '').trim();
+    if (say === 'act' || say === 'thought') return { whole: say, parts: [{ cls: say, text: t }] };
+    if (say === 'speech') return { whole: null, parts: [{ cls: null, text: t }] };
+    const parts = [];
+    const push = (cls, s) => { if (!s) return; const last = parts[parts.length - 1]; if (!cls && last && !last.cls) last.text += s; else parts.push({ cls, text: s }); };
+    const OPEN = '(（'; const CLOSE = ')）';
+    let i = 0;
+    while (i < t.length) {
+      const c = t[i];
+      if (OPEN.includes(c)) {
+        let d = 0; let j = i;
+        for (; j < t.length; j++) { if (OPEN.includes(t[j])) d++; else if (CLOSE.includes(t[j]) && --d === 0) break; }
+        if (j < t.length) { push('act', t.slice(i, j + 1)); i = j + 1; continue; }
+      }
+      if (c === "'" || c === '‘') {
+        let j = i + 1;
+        while (j < t.length && t[j] !== '\n' && t[j] !== '‘' && t[j] !== "'" && t[j] !== '’') j++;
+        if (j < t.length && (t[j] === "'" || t[j] === '’') && j > i + 1) { push('thought', t.slice(i, j + 1)); i = j + 1; continue; }
+      }
+      push(null, c); i++;
+    }
+    // 줄 전체가 지문 하나·생각 하나면 줄 모양으로
+    const whole = parts.length === 1 && parts[0].cls ? parts[0].cls : null;
+    return { whole, parts };
+  }
   function sayLine(e) {
     const line = el('div', 'line'); line.id = e.id;
-    const t = e.text.trim();
-    // 줄 전체가 '생각' 하나거나 (지문) 하나면 줄 모양으로
-    if (/^['‘][^'‘’]*['’]$/.test(t)) { line.classList.add('say-thought'); appendText(line, t); return line; }
-    if (/^\([^()]*\)$/.test(t)) { line.classList.add('say-act'); appendText(line, t); return line; }
-    // 줄 안에 섞여 있으면 조각마다: (지문) · '생각'(작은따옴표) · 나머지는 말
-    t.split(/(\([^()]*\)|['‘][^'‘’\n]+['’])/).forEach((part) => {
-      if (!part) return;
-      const cls = /^\([\s\S]*\)$/.test(part) ? 'act' : /^['‘][\s\S]*['’]$/.test(part) ? 'thought' : null;
-      if (cls) { const s = el('span', cls); appendText(s, part); line.append(s); } else appendText(line, part);
-    });
+    const { whole, parts } = sayParts(e.text, e.say);
+    if (whole) { line.classList.add('say-' + whole); fmtInto(line, parts[0].text); return line; }
+    parts.forEach((p) => { if (p.cls) { const s = el('span', p.cls); fmtInto(s, p.text); line.append(s); } else fmtInto(line, p.text); });
     return line;
   }
   function plainLine(e) {
     const line = el('div', 'line'); line.id = e.id;
-    appendText(line, e.text);
+    fmtInto(line, e.text);
     return line;
   }
 
@@ -813,7 +868,7 @@
       const sw = isChar ? avatar(s) : el('span', 'dot big');
       paint(sw, s);
       const name = el('div', 'person-name');
-      name.append(el('b', null, s.name), el('span', null, roleName[s.role] || ''));
+      name.append(el('b', null, s.name), el('span', null, s.role === 'npc' && s.enemy ? '에너미' : roleName[s.role] || ''));
       // 이름이 밝은·어두운 테마에서 어떻게 보이는지 (자동으로 밝기를 맞춘 글자색)
       const pv = paint(el('span', 'name-preview'), s);
       pv.title = '이름 글자는 테마마다 읽히도록 밝기를 자동으로 맞춰요';
@@ -928,5 +983,5 @@
   // 편집기(js/editor.js)가 쓰는 것들
   SL.app = { store, S, el, $, render, renderHead, toast, avatar, spk, sessionList, sessionLabel, sessionOf, fmtDate, fmtTime,
     diceCard, diceLabel, appendText, topVisibleEntry, restorePlace, holdAnchor, releaseAnchor, KINDS, DICE_LABELS, RESULT_LABEL, SWATCHES, prefs, openPeople, withObj, visible,
-    openBook, ctx: () => ctx, paint, updateBarBook, goTo, openEntry, fmtPeriod };
+    openBook, ctx: () => ctx, paint, updateBarBook, goTo, openEntry, fmtPeriod, sayParts, fmtInto, stripMd };
 })();

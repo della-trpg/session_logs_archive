@@ -37,7 +37,7 @@
 
   // ── 넘길 단계 만들기 ──────────────────────
   function shown(e) {
-    if (e.deleted || e.kind === 'meta' || e.kind === 'whisper') return false;
+    if (e.deleted || e.kind === 'meta' || e.kind === 'whisper' || e.nvHide) return false;   // nvHide: 편집에서 '노벨 보기에서 숨기기'
     if (e.kind === 'chat') return P.chat;
     if (e.kind === 'dice') return P.dice;
     if (e.kind === 'system') return P.system;
@@ -76,14 +76,37 @@
       const list = store.entries(s.no).filter(shown);
       if (!list.length) return;
       steps.push({ t: 'session', sess: s.no });
+      let chats = [];
+      const flush = () => {
+        chatPages(chats).forEach((items, i, arr) => {
+          items.forEach((x) => { if (!firstStep.has(x.id)) firstStep.set(x.id, steps.length); });
+          steps.push({ t: 'chat', items, page: i, pages: arr.length, sess: s.no });
+        });
+        chats = [];
+      };
       list.forEach((e) => {
+        if (e.kind === 'chat') { chats.push(e); return; }
+        flush();
         firstStep.set(e.id, steps.length);
         if (e.kind === 'scene') steps.push({ t: 'scene', e, sess: s.no });
         else if (e.kind === 'dice') steps.push({ t: 'dice', e, sess: s.no });
         else if (e.kind === 'system') steps.push({ t: 'sys', e, sess: s.no });
         else pagesOf(e.text).forEach((p, i, arr) => steps.push({ t: 'line', e, text: p, page: i, pages: arr.length, sess: s.no }));
       });
+      flush();
     });
+  }
+  // 사담 묶음 → 쪽 (한 쪽에 8줄·400자 안쪽)
+  const CHAT_LINES = 8; const CHAT_CHARS = 400;
+  function chatPages(list) {
+    const out = []; let cur = []; let n = 0;
+    list.forEach((e) => {
+      const len = Math.min((e.text || '').length, CHAT_CHARS);
+      if (cur.length && (cur.length >= CHAT_LINES || n + len > CHAT_CHARS)) { out.push(cur); cur = []; n = 0; }
+      cur.push(e); n += len;
+    });
+    if (cur.length) out.push(cur);
+    return out;
   }
   // 그 줄이 노벨에서 안 보이는 종류면 바로 뒤의 보이는 줄로
   function stepFor(id) {
@@ -97,7 +120,7 @@
     for (let j = i + 1; j < all.length; j++) if (firstStep.has(all[j].id)) return firstStep.get(all[j].id);
     return steps.length - 1;
   }
-  const entryOf = (i) => { for (let j = i; j < steps.length; j++) if (steps[j].e) return steps[j].e; return null; };
+  const entryOf = (i) => { for (let j = i; j < steps.length; j++) { const st = steps[j]; if (st.e) return st.e; if (st.items) return st.items[0]; } return null; };
 
   // ── 무대에 선 인물: 지금 장면에서 말한 PC·NPC (최근 4명, 처음 나온 순서로 자리 고정) ──
   function charOf(st) {
@@ -154,6 +177,10 @@
         <div class="nv-glow" id="nvGlow"></div>
         <div class="nv-cast" id="nvCast"></div>
         <div class="nv-sys" id="nvSys" hidden></div>
+        <section class="nv-chat" id="nvChat" hidden aria-label="사담">
+          <div class="nv-chat-head"><b>사담</b><span class="nv-page" id="nvChatPage"></span></div>
+          <ol class="nv-chat-list" id="nvChatList"></ol>
+        </section>
         <div class="nv-card" id="nvCard" hidden></div>
         <div class="nv-box" id="nvBox">
           <div class="nv-name" id="nvName"></div>
@@ -261,6 +288,7 @@
     if (st.t === 'line') wait += per * st.text.length;
     else if (st.t === 'scene' || st.t === 'session') wait = base + 900;
     else if (st.t === 'dice') wait = base + 1200;
+    else if (st.t === 'chat') wait = base + per * 0.5 * st.items.reduce((a, x) => a + (x.text || '').length, 0);
     autoTimer = setTimeout(() => { if (idx >= steps.length - 1) { setAuto(false); showEnd(); } else show(idx + 1); }, wait);
   }
 
@@ -291,6 +319,9 @@
     seek.style.setProperty('--p', steps.length > 1 ? (i / (steps.length - 1)) * 100 + '%' : '0%');
 
     const live = $('nvLive');
+    $('nvChat').hidden = st.t !== 'chat';
+
+    $('nvBox').classList.remove('is-past');
     if (st.t === 'session' || st.t === 'scene') {
       renderCast([], null);
       $('nvBox').hidden = true; $('nvSys').hidden = true;
@@ -317,6 +348,18 @@
     const speaker = charOf(st);
     renderCast(castAt(i), speaker ? speaker.id : null);
 
+    if (st.t === 'chat') {
+      // 대사 상자에는 바로 앞 대사를 흐리게 남겨 두고, 사담은 옆 창에 한 줄씩
+      $('nvSys').hidden = true;
+      let j = i - 1;
+      while (j >= 0 && steps[j].sess === st.sess && (steps[j].t === 'chat' || steps[j].t === 'sys')) j--;
+      const prevStep = j >= 0 && steps[j].sess === st.sess && (steps[j].t === 'line' || steps[j].t === 'dice') ? steps[j] : null;
+      if (prevStep) { fillBox(prevStep); $('nvBox').hidden = false; $('nvBox').classList.add('is-past'); } else $('nvBox').hidden = true;
+      showChat(st, instant);
+      live.textContent = '사담. ' + st.items.map((x) => { const xs = spk(x.speaker); return `${xs ? xs.name : '알 수 없음'}: ${A().stripMd(x.text)}`; }).join(' / ');
+      return;
+    }
+
     if (st.t === 'sys') {
       $('nvBox').hidden = true;
       const sys = $('nvSys'); sys.hidden = false; sys.replaceChildren(el('span', null, st.e.text));
@@ -326,14 +369,30 @@
       return;
     }
     $('nvSys').hidden = true;
-    const box = $('nvBox'); box.hidden = false;
+    $('nvBox').hidden = false;
+    const text = fillBox(st);
+    const e = st.e; const s = spk(e.speaker);
+    if (st.t === 'dice') {
+      const d = e.dice || {};
+      restart(text.firstChild, 'nv-pop');
+      live.textContent = diceSpeech(e, d.who && !/님\s*PC$/i.test(d.who) ? d.who : s ? s.name : '');
+      afterShown(true);
+      return;
+    }
+    live.textContent = `${e.kind === 'narration' ? '' : (s ? s.name : '알 수 없음') + ': '}${A().stripMd(st.text)}`;
+    type(text, instant);
+  }
+
+  // 대사 상자에 한 단계(대사·나레이션·주사위)를 채움 (글자는 다 보이는 상태로)
+  function fillBox(st) {
+    const { $ } = dom;
+    const box = $('nvBox');
     const name = $('nvName'); name.replaceChildren();
     const text = $('nvText'); text.replaceChildren();
     const e = st.e; const s = spk(e.speaker);
     box.dataset.kind = st.t === 'dice' ? 'dice' : e.kind;
     A().paint(box, s);
     $('nvPage').textContent = st.pages > 1 ? `${st.page + 1}/${st.pages}` : '';
-
     if (st.t === 'dice') {
       const d = e.dice || {};
       const who = d.who && !/님\s*PC$/i.test(d.who) ? d.who : s ? s.name : '';
@@ -341,25 +400,57 @@
       const c = A().diceCard(e, s);
       c.classList.add('nv-dice');
       text.append(c);
-      restart(c, 'nv-pop');
-      live.textContent = diceSpeech(e, who);
-      afterShown(true);
-      return;
+      return text;
     }
     if (e.kind === 'dialogue') {
       name.append(el('b', null, s ? s.name : '알 수 없음'));
       if (s && s.role === 'npc') name.append(el('span', 'nv-role', 'NPC'));
-      sayInto(text, st.text);
+      sayInto(text, st.text, e.say);
     } else if (e.kind === 'narration') {
       name.append(el('span', 'nv-role', 'GM 나레이션'));
-      text.append(document.createTextNode(st.text));
+      fmt(text, st.text);
     } else {   // 사담
       const dot = A().paint(el('span', s ? 'dot' : 'dot unknown'), s);
       name.append(dot, el('b', null, s ? s.name : '알 수 없음'), el('span', 'nv-role', s && s.role === 'gm' ? 'GM · 사담' : '사담'));
-      text.append(document.createTextNode(st.text));
+      fmt(text, st.text);
     }
-    live.textContent = `${e.kind === 'narration' ? '' : (s ? s.name : '알 수 없음') + ': '}${st.text}`;
-    type(text, instant);
+    return text;
+  }
+
+  // 사담 창: 한 줄씩 쭉쭉 (글자 속도 설정을 따름, '바로'면 한꺼번에)
+  const CHAT_GAP = { s: 220, m: 120, f: 60, i: 0 };
+  function showChat(st, instant) {
+    const { $ } = dom;
+    $('nvChatPage').textContent = st.pages > 1 ? `${st.page + 1}/${st.pages}` : '';
+    const list = $('nvChatList'); list.replaceChildren();
+    let prev = null;
+    const lis = st.items.map((x) => {
+      const xs = spk(x.speaker);
+      const li = el('li', x.speaker === prev ? 'cont' : null);
+      if (x.speaker !== prev) {
+        const who = el('span', 'who');
+        who.append(A().paint(el('span', xs ? 'dot' : 'dot unknown'), xs), el('b', null, xs ? xs.name : '알 수 없음'));
+        if (xs && xs.role === 'gm') who.append(el('span', 'tag', 'GM'));
+        li.append(who);
+      }
+      const tx = el('span', 'txt'); fmt(tx, x.text); li.append(tx);
+      prev = x.speaker;
+      list.append(li);
+      return li;
+    });
+    list.scrollTop = 0;
+    const gap = CHAT_GAP[P.speed];
+    if (instant || !gap || reduced()) { afterShown(); return; }
+    lis.forEach((li) => li.classList.add('wait'));
+    dom.root.classList.add('is-typing');
+    let k = 0; let timer = 0;
+    const step = () => {
+      if (k >= lis.length) { finishTyping(); return; }
+      lis[k].classList.remove('wait'); lis[k].classList.add('nv-line');
+      k++; timer = setTimeout(step, gap);
+    };
+    typing = { nodes: [], stop: () => { clearTimeout(timer); lis.forEach((li) => li.classList.remove('wait')); } };
+    step();
   }
   function diceSpeech(e, who) {
     const d = e.dice || {};
@@ -374,14 +465,13 @@
   }
 
   // (지문) · '생각' 은 따로 칠함 (채팅 보기와 같은 규칙)
-  function sayInto(box, t) {
-    if (/^['‘][^'‘’]*['’]$/.test(t)) { box.append(el('span', 'thought whole', t)); return; }
-    if (/^\([^()]*\)$/.test(t)) { box.append(el('span', 'act whole', t)); return; }
-    t.split(/(\([^()]*\)|['‘][^'‘’\n]+['’])/).forEach((part) => {
-      if (!part) return;
-      const cls = /^\([\s\S]*\)$/.test(part) ? 'act' : /^['‘][\s\S]*['’]$/.test(part) ? 'thought' : null;
-      box.append(cls ? el('span', cls, part) : document.createTextNode(part));
-    });
+  // 서식(**굵게** 등)은 그대로 살리고, 글자 하나씩 나오게 텍스트 노드로
+  const addText = (node, s) => node.append(document.createTextNode(s));
+  const fmt = (node, t) => A().fmtInto(node, t, addText);
+  function sayInto(box, t, say) {
+    const { whole, parts } = A().sayParts(t, say);
+    if (whole) { const sp = el('span', whole + ' whole'); fmt(sp, parts[0].text); box.append(sp); return; }
+    parts.forEach((p) => { if (p.cls) { const sp = el('span', p.cls); fmt(sp, p.text); box.append(sp); } else fmt(box, p.text); });
   }
 
   // ── 글자가 한 자씩 ─────────────────────
@@ -454,6 +544,7 @@
       f.setAttribute('aria-hidden', 'true');
     });
     box.dataset.n = String(want.length);
+    box.style.setProperty('--n', String(Math.max(1, want.length)));
     box.classList.toggle('has-on', !!on && ids.includes(on));
     // 말하는 사람 쪽으로 은은한 빛
     const g = dom.$('nvGlow');
@@ -557,11 +648,23 @@
     for (let i = from; i <= idx; i++) {
       const st = steps[i];
       if (st.t === 'line' && st.e === lastE) {   // 나뉜 화면은 한 줄로 이어 붙임
-        list.lastChild.querySelector('.nv-log-text').append(document.createTextNode(' ' + st.text));
+        const lt = list.lastChild.querySelector('.nv-log-text'); lt.append(document.createTextNode(' ')); fmt(lt, st.text);
         if (i === idx) list.lastChild.querySelector('button').setAttribute('aria-current', 'true');
         continue;
       }
       lastE = st.e || null;
+      if (st.t === 'chat') {
+        st.items.forEach((x) => {
+          const xs = spk(x.speaker);
+          const li = el('li', 'k-chat'); const b = el('button'); b.type = 'button';
+          A().paint(b, xs);
+          b.append(el('b', null, xs ? xs.name : '알 수 없음'), el('span', 'nv-log-text', A().stripMd(x.text)));
+          if (i === idx) b.setAttribute('aria-current', 'true');
+          b.addEventListener('click', () => jump(i));
+          li.append(b); list.append(li);
+        });
+        continue;
+      }
       const li = el('li', 'k-' + (st.t === 'line' ? st.e.kind : st.t));
       const b = el('button'); b.type = 'button';
       if (st.t === 'session' || st.t === 'scene') {
@@ -576,7 +679,7 @@
         else {
           A().paint(b, s);
           if (st.e.kind !== 'narration') b.append(el('b', null, s ? s.name : '알 수 없음'));
-          const t = el('span', 'nv-log-text'); t.append(document.createTextNode(st.text)); b.append(t);
+          const t = el('span', 'nv-log-text'); fmt(t, st.text); b.append(t);
         }
       }
       if (i === idx) b.setAttribute('aria-current', 'true');
@@ -624,7 +727,8 @@
     }
     openSheet('set');
   }
-  function applySize() { dom.root.dataset.size = P.size; }
+  // 사담을 켜 두면 오른쪽에 사담 창 자리를 늘 비워 둠 (넘길 때마다 인물 카드가 들썩이지 않게)
+  function applySize() { dom.root.dataset.size = P.size; dom.root.classList.toggle('chat-on', !!P.chat); }
 
   // ── 열기 · 닫기 ───────────────────────
   // id: 그 줄부터 / null: 기억한 곳(없으면 처음)

@@ -869,3 +869,87 @@ body.editing .chip-novel, body.editing #novelActs { display: none; }
   .nv-more { animation: none; }
 }
 .imp-detail { margin: 0.4rem 0 0; display: grid; gap: 0.15rem; font-size: 0.76rem; color: var(--muted); font-family: var(--font-mono); overflow-wrap: anywhere; user-select: all; }
+.book-card-cast .sep { color: var(--muted); opacity: 0.6; }
+
+/* 노벨: 폰에서 누를 때 파랗게 번쩍이는 것(탭 강조) 없애기 */
+.nv, .nv * { -webkit-tap-highlight-color: transparent; }
+.nv-stage, .nv-box { -webkit-touch-callout: none; }
+.nv-btn:active { background: var(--tint); }
+
+/* 노벨: 사담 창 — 다음 대사 전까지의 사담을 한 쪽에 모아서 */
+.nv-chat {
+  position: absolute; z-index: 4; top: 1rem; right: max(16px, env(safe-area-inset-right, 0px));
+  width: min(24rem, 42%); max-height: calc(100% - 15rem); display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--tint) 94%, transparent); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 30px -14px rgba(0, 0, 0, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: nvIn .25s ease both; cursor: pointer;
+}
+.nv-chat-head { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.85rem 0.35rem; font-size: 0.78rem; color: var(--muted); border-bottom: 1px solid var(--line); }
+.nv-chat-head b { font-weight: 600; letter-spacing: 0.04em; }
+.nv-chat-list { list-style: none; margin: 0; padding: 0.45rem 0.85rem 0.6rem; overflow-y: auto; display: grid; gap: 0.2rem; font-size: 0.86rem; line-height: 1.55; color: var(--ink-soft); }
+.nv-chat-list li { overflow-wrap: anywhere; white-space: pre-wrap; }
+.nv-chat-list li:not(.cont) { margin-top: 0.25rem; }
+.nv-chat-list li:first-child { margin-top: 0; }
+.nv-chat-list .who { display: flex; align-items: center; gap: 0.35rem; font-size: 0.76rem; color: var(--ink); }
+.nv-chat-list .who b { font-weight: 600; }
+.nv-chat-list .tag { font-size: 0.66rem; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 0.25rem; }
+.nv-chat-list li.wait { visibility: hidden; }
+.nv-line { animation: nvLine .22s ease both; }
+@keyframes nvLine { from { opacity: 0; transform: translateY(4px); } }
+.nv-box.is-past { opacity: 0.55; }
+.nv-box.is-past .nv-more { visibility: hidden; }
+@media (max-width: 720px) {
+  .nv-chat { left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); top: 0.75rem; width: auto; max-height: 48%; }
+  .nv-chat-list { font-size: 0.84rem; }
+}
+@media (prefers-reduced-motion: reduce) { .nv-chat, .nv-line { animation: none; } }
+/* 인물 카드 크기: 화면 높이와, 무대 너비를 인원수로 나눈 폭 중 작은 쪽에 맞춤 (카드가 화면 밖으로 안 나가게) */
+.nv-cast { --n: 1; --gap: clamp(10px, 3vw, 40px); --avail: calc(100vw - 32px); gap: var(--gap); }
+.nv-frame { height: min(clamp(150px, 40vh, 330px), calc((var(--avail) - (var(--n) - 1) * var(--gap)) / var(--n) * 1.4 - 8px)); }
+/* 사담 창은 인물 카드 위에 겹쳐 띄움 (자리를 비워 두지 않음) */
+
+/* 노벨: 인물 카드 자리 고정 (2026-10-30)
+   대사 상자·단추는 무대 아래에 붙고 상자는 위로 자람. 카드 자리는 '보통 높이 상자' 기준으로 늘 같아서,
+   주사위·진행 표시·긴 글 때문에 상자 높이가 바뀌어도 카드가 움직이지 않음 (긴 글은 카드 아래쪽을 살짝 덮음) */
+.nv-stage { --box-min: calc(var(--nv-fs) * 1.85 * 3 + 2.85rem); --ctrl-h: 2.3rem; --stage-pad: max(14px, env(safe-area-inset-bottom, 0px)); }
+.nv-cast { padding-bottom: calc(var(--box-min) + var(--ctrl-h) + 0.7rem + 1.5rem); }
+.nv-box {
+  position: absolute; left: 0; right: 0; margin: 0 auto; width: min(calc(100% - 32px), 52rem);
+  bottom: calc(var(--stage-pad) + var(--ctrl-h) + 0.7rem);
+}
+.nv-box[data-kind="dice"] { min-height: var(--box-min); display: grid; align-content: center; }
+.nv-ctrl { position: absolute; left: 0; right: 0; bottom: var(--stage-pad); margin: 0; height: var(--ctrl-h); align-items: center; }
+@media (max-width: 720px) {
+  .nv-cast { --n: 1 !important; }   /* 폰은 말하는 사람 카드 하나만 */
+  .nv-frame { height: clamp(120px, 28vh, 220px); }
+}
+
+/* 대사 속 서식 (**굵게** *기울임* ~~취소선~~) */
+.line strong, .nv-text strong, .nv-chat-list strong, .nv-log strong { font-weight: 700; }
+.line s, .nv-text s, .nv-chat-list s { text-decoration-thickness: 1px; }
+/* 머리말 인물: NPC 펼치기·접기 */
+.cast-more {
+  height: 100%; min-height: 2.9rem; padding: 0.4rem 0.95rem; border-radius: 999px; cursor: pointer;
+  border: 1px dashed var(--line); background: transparent; color: var(--ink-soft); font-size: 0.85rem;
+}
+.cast-more:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
+.cast-more:disabled { opacity: 0.5; cursor: default; }
+
+/* 편집: 그림 목록 */
+.sheet.sheet-wide { width: min(46rem, 100%); }
+.img-list { display: grid; gap: 0.75rem; overflow-y: auto; max-height: min(70vh, 44rem); padding-right: 0.2rem; }
+.img-missing { border: 1px dashed var(--line); border-radius: 10px; padding: 0.6rem 0.8rem; display: grid; gap: 0.4rem; justify-items: start; }
+.img-missing p { margin: 0; font-size: 0.84rem; color: var(--ink-soft); }
+.img-row { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 0.8rem; align-items: start; padding: 0.65rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.img-thumb { width: 8.5rem; height: 6.5rem; border-radius: 6px; overflow: hidden; background: var(--tint); display: grid; place-items: center; }
+.img-thumb a, .img-thumb img { display: block; width: 100%; height: 100%; }
+.img-thumb img { object-fit: contain; }
+.img-info { display: grid; gap: 0.35rem; min-width: 0; justify-items: start; }
+.img-where { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.img-where b { color: var(--ink); }
+.img-ctx { margin: 0; font-size: 0.82rem; color: var(--ink-soft); overflow-wrap: anywhere; }
+.img-form { display: flex; gap: 0.35rem; width: 100%; }
+.img-form input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.3rem 0.55rem; font-size: 0.85rem; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: inherit; }
+@media (max-width: 520px) { .img-row { grid-template-columns: minmax(0, 1fr); } .img-thumb { width: 100%; height: 9rem; } }
+.img-thumb > a.small { padding: 0.5rem; text-align: center; font-size: 0.76rem; color: var(--accent); height: auto; }
