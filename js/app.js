@@ -382,7 +382,8 @@
   }
 
   // ── 마크다운 서식: **굵게** *기울임* ~~취소선~~ (찾기 표시는 글 조각마다 그대로) ──
-  const MD = /\*\*([^*\n](?:[^\n]*?[^*\s])?)\*\*|~~([^~\n](?:[^\n]*?[^~\s])?)~~|\*([^*\s](?:[^*\n]*?[^*\s])?)\*/g;
+  // ***굵은 기울임*** · **굵게** · ~~취소선~~ · *기울임* (기울임 안의 **굵게**도)
+  const MD = /\*\*\*([^*\s](?:[^\n]*?[^*\s])?)\*\*\*|\*\*([^*\n](?:[^\n]*?[^*\s])?)\*\*|~~([^~\n](?:[^\n]*?[^~\s])?)~~|\*([^*\s](?:(?:[^*\n]|\*\*[^*\n]+\*\*)*?[^*\s])?)\*/g;
   function fmtInto(node, text, add) {
     add = add || appendText;
     let i = 0; let m;
@@ -390,17 +391,19 @@
     const parts = [];
     while ((m = MD.exec(text))) {
       // 기울임 '*'는 글자 바로 뒤에 붙은 별표(예: 2*3)는 서식으로 보지 않음
-      if (m[3] != null && m.index > 0 && /[\w*]/.test(text[m.index - 1])) continue;
-      parts.push([m.index, m[0].length, m[1] != null ? 'strong' : m[2] != null ? 's' : 'em', m[1] ?? m[2] ?? m[3]]);
+      if (m[4] != null && m.index > 0 && /[\w*]/.test(text[m.index - 1])) continue;
+      parts.push([m.index, m[0].length, m[1] != null ? 'strong-em' : m[2] != null ? 'strong' : m[3] != null ? 's' : 'em', m[1] ?? m[2] ?? m[3] ?? m[4]]);
     }
     parts.forEach(([at, len, tag, inner]) => {
       if (at > i) add(node, text.slice(i, at));
-      const w = el(tag); fmtInto(w, inner, add); node.append(w);
+      let w;
+      if (tag === 'strong-em') { w = el('strong'); const em = el('em'); fmtInto(em, inner, add); w.append(em); } else { w = el(tag); fmtInto(w, inner, add); }
+      node.append(w);
       i = at + len;
     });
     if (i < text.length) add(node, text.slice(i));
   }
-  const stripMd = (t) => String(t || '').replace(MD, (m0, a, b, c) => a ?? b ?? c ?? m0);
+  const stripMd = (t) => { let x = String(t || ''); for (let k = 0; k < 3; k++) x = x.replace(MD, (m0, a, b, c, d) => a ?? b ?? c ?? d ?? m0); return x; };
 
   // 대사 한 줄을 조각으로: (지문) — 괄호 안 괄호도 짝을 맞춰서 · '생각'(작은따옴표) · 나머지는 말
   // say: 편집에서 고른 표시 방식 'act' | 'thought' | 'speech' (없으면 자동)

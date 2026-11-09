@@ -450,7 +450,7 @@
     });
     list.scrollTop = 0;
     const gap = CHAT_GAP[P.speed];
-    if (instant || !gap || reduced()) { afterShown(); return; }
+    if (instant || !gap) { afterShown(); return; }   // 글자 속도는 설정 그대로 (시스템 '애니메이션 줄이기'와 상관없이)
     lis.forEach((li) => li.classList.add('wait'));
     dom.root.classList.add('is-typing');
     let k = 0; let timer = 0;
@@ -487,7 +487,7 @@
   // ── 글자가 한 자씩 ─────────────────────
   function type(box, instant) {
     const cps = CPS[P.speed];
-    if (instant || !cps || reduced()) { afterShown(true); return; }
+    if (instant || !cps) { afterShown(true); return; }   // '바로'를 고르지 않는 한 한 자씩 (시스템 '애니메이션 줄이기'는 움직임 효과에만)
     const nodes = [];
     const walk = (n) => { n.childNodes.forEach((c) => { if (c.nodeType === 3) { nodes.push([c, c.data]); c.data = ''; } else walk(c); }); };
     walk(box);

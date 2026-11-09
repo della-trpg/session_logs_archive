@@ -225,6 +225,7 @@
   // ── 바뀐 것만 다시 그리기 ───────────────
   E.onChange = function (ev) {
     E.updateBar();
+    Promise.resolve().then(composerRefresh);   // 줄이 바뀐 뒤 '넣는 곳'·'회차 맨 끝으로'를 다시 맞춤
     const op = ev.op;
     if (!op) { A.render(true); return; }
     // 인물만 바뀐 경우(이름·역할·색 등): 그 인물의 줄만 다시 그림 (전체 6천여 줄을 다시 그리지 않게)
@@ -1368,7 +1369,11 @@
   const W = E.write = { after: null, session: null, who: 'narration' };
   const SPECIAL = [['narration', '나레이션'], ['scene', '장면 제목'], ['system', '진행 표시']];
   function writeSessions() { return store.book.sessions.filter((s) => s.no > 0 || store.entries(s.no, true).length); }
-  function lastOf(no) { const l = store.entries(no, true); return l.length ? l[l.length - 1].id : null; }
+  function lastOf(no) {
+    const l = store.entries(no, true);
+    for (let i = l.length - 1; i >= 0; i--) if (!l[i].deleted) return l[i].id;
+    return l.length ? l[l.length - 1].id : null;
+  }
   // 기준 줄이 지워졌거나 회차가 사라졌으면 맞춰 줌
   function fixWritePlace() {
     const ss = writeSessions();
@@ -1447,18 +1452,32 @@
       const s = A.spk(after.speaker);
       const peek = (after.kind === 'dice' ? A.diceLabel(after.dice || {}) : after.text || '').slice(0, 24);
       where.append(document.createTextNode(`넣는 곳: ${s ? s.name + ' ' : ''}'${peek}${(after.text || '').length > 24 ? '…' : ''}' 아래`));
-      const last = lastOf(W.session);
-      if (last !== W.after) {
+      if (lastOf(W.session) !== W.after) {
         const b = el('button', 'linkish', '회차 맨 끝으로'); b.type = 'button';
-        b.addEventListener('click', () => { W.after = last; composerRefresh(); });
+        // 누르는 순간의 마지막 줄로 (그린 뒤에 줄이 늘었어도), 누르는 사이 다시 그려져도 놓치지 않게 pointerdown에서
+        tapBtn(b, () => { W.after = lastOf(W.session); composerRefresh(); showWritePlace(); });
         where.append(' · ', b);
       }
       const go = el('button', 'linkish', '보기'); go.type = 'button';
-      go.addEventListener('click', () => { const r = document.getElementById(W.after); if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('is-target'); setTimeout(() => r.classList.remove('is-target'), 1500); } });
+      tapBtn(go, showWritePlace);
       where.append(' · ', go);
     } else where.textContent = `넣는 곳: ${A.sessionLabel(A.sessionOf(W.session))} 첫 줄`;
   }
   E.composerRefresh = composerRefresh;
+  // 쓰기 막대의 작은 단추: 누르자마자(pointerdown) 실행하고 글 칸의 포커스는 그대로. 키보드는 click으로
+  function tapBtn(btn, fn) {
+    let viaPointer = false;
+    btn.addEventListener('pointerdown', (ev) => { if (ev.button !== 0) return; ev.preventDefault(); viaPointer = true; fn(); });
+    btn.addEventListener('click', () => { if (viaPointer) { viaPointer = false; return; } fn(); });
+  }
+  // 넣는 곳(기준 줄)을 화면에 보여 줌
+  function showWritePlace() {
+    const r = W.after && document.getElementById(W.after);
+    if (!r) return;
+    const cb = $('composer').getBoundingClientRect(); const rr = r.getBoundingClientRect();
+    if (rr.top < 90 || rr.bottom > cb.top - 8) r.scrollIntoView({ block: 'center' });
+    r.classList.add('is-target'); setTimeout(() => r.classList.remove('is-target'), 1500);
+  }
   // 줄 ⋯ 메뉴의 '여기 아래에 이어 쓰기'
   function writeHere(e) {
     W.after = e.id; W.session = e.session;
