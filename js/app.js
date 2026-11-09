@@ -652,7 +652,11 @@
       sec.append(frag);
       log.append(sec);
     });
-    if (!shown) log.append(el('p', 'empty', '고른 종류에 해당하는 줄이 없어요. 위쪽에서 종류를 켜 보세요.'));
+    if (!shown) {
+      const none = !store.book.entries.some((e) => !e.deleted);
+      log.append(el('p', 'empty', !none ? '고른 종류에 해당하는 줄이 없어요. 위쪽에서 종류를 켜 보세요.'
+        : SL.editor && !$('optEdit').hidden ? '아직 쓴 줄이 없어요. 편집하기를 누르면 아래 쓰기 막대에서 한 줄씩 쓸 수 있어요.' : '아직 쓴 줄이 없어요.'));
+    }
   }
 
   // 다시 그려도 읽던 자리를 지키기

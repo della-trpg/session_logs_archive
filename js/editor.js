@@ -16,6 +16,13 @@
     ['system', '진행 표시'], ['scene', '장면 제목'], ['meta', '회차 카드 (숨김)'], ['whisper', '귓속말 (숨김)'],
   ];
   const KIND_NAME = Object.fromEntries(KIND_OPTS.map(([k, v]) => [k, v.replace(/ \(숨김\)/, '')]));
+  // 가져온(원본이 있는) 줄이 하나라도 있는 기록인지 — 처음부터 직접 쓴 기록과 구분
+  let importedCache = null;
+  function hasImported() {
+    if (!importedCache || importedCache.book !== store.book || importedCache.n !== store.book.entries.length) importedCache = { book: store.book, n: store.book.entries.length, v: store.book.entries.some((x) => x.src) };
+    return importedCache.v;
+  }
+  const ROLE_NAME = { pc: 'PC', npc: 'NPC', gm: 'GM', pl: '플레이어' };
   const SAY_NAME = { act: '지문', thought: '생각', speech: '말' };
   const ROLE_OPTS = [['pc', 'PC'], ['npc', 'NPC'], ['enemy', '에너미'], ['gm', 'GM'], ['pl', '플레이어']];
 
@@ -43,7 +50,7 @@
   };
   E.sessionList = function () {
     // 편집 중에는 휴지통에만 줄이 남은 회차도 보여야 함
-    return store.book.sessions.filter((s) => store.entries(s.no, true).length);
+    return store.book.sessions.filter((s) => store.entries(s.no, true).length || s.no > 0);
   };
 
   // ── 켜기 · 끄기 ─────────────────────────
@@ -58,6 +65,7 @@
     updateBulk();
     E.updateBar();
     A.render(anchor || true);
+    composerRefresh();
   };
 
   E.updateBar = function () {
@@ -96,7 +104,9 @@
       shown += sec.querySelectorAll('.er').length;
       log.append(sec);
     });
-    if (!shown) log.append(el('p', 'empty', E.trash ? '휴지통이 비어 있어요.' : '고른 종류에 해당하는 줄이 없어요.'));
+    if (!shown) log.append(el('p', 'empty', E.trash ? '휴지통이 비어 있어요.'
+      : store.book.entries.some((e) => !e.deleted) ? '고른 종류에 해당하는 줄이 없어요.' : '아직 쓴 줄이 없어요. 아래 쓰기 막대에서 말하는 사람을 고르고 첫 줄을 써 보세요.'));
+    composerRefresh();
   };
 
   function sectionFor(s) {
@@ -186,7 +196,7 @@
     }
 
     const flags = el('span', 'er-flags');
-    if (e.created) flags.append(el('span', 'flag', '새 줄'));
+    if (e.created && hasImported()) flags.append(el('span', 'flag', '새 줄'));   // 직접 쓰는 기록에서는 모든 줄이 새 줄이라 표시 안 함
     else if (e.orig != null && e.orig !== e.text) { const f = el('span', 'flag', '수정됨'); f.title = '원문: ' + e.orig; flags.append(f); }
     if (e.say && e.kind === 'dialogue') { const f = el('span', 'flag', SAY_NAME[e.say] + ' 고정'); f.title = '표시 방식을 직접 정한 줄 (⋯ 메뉴 → 표시 방식)'; flags.append(f); }
     if (e.nvHide) { const f = el('span', 'flag', '노벨 숨김'); f.title = '노벨 보기에서는 건너뛰어요. 채팅 로그에는 그대로 보여요.'; flags.append(f); }
@@ -553,6 +563,7 @@
     const sessions = store.book.sessions;
     const si = sessions.findIndex((s) => s.no === e.session);
     const items = [
+      { label: '여기 아래에 이어 쓰기', hint: '아래 쓰기 막대로', run: () => writeHere(e) },
       { label: '아래에 새 줄', run: () => insertNear(e, true) },
       { label: '아래에 새 주사위 줄', run: () => insertDice(e) },
       { label: '위에 새 줄', run: () => insertNear(e, false) },
@@ -764,7 +775,7 @@
         if (res) nd.resultOverride = res; else delete nd.resultOverride;
         n.dice = nd;
         if (e.kind !== 'dice') { if (n.orig == null && !n.created && e.text) n.orig = e.text; n.kind = 'dice'; n.text = ''; delete n.imgs; delete n.say; }
-        if (opts.place) store.commit('새 주사위 줄', { entries: placeChanges([n.id], n.session, opts.place, { [n.id]: n }) });
+        if (opts.place || opts.placeSession != null) store.commit('새 주사위 줄', { entries: placeChanges([n.id], n.session, opts.place || null, { [n.id]: n }) });
         else store.commit(e.kind === 'dice' ? '주사위 고치기' : '주사위 줄로 바꾸기', { entries: [n] });
         if (opts.done) opts.done();
       },
@@ -1352,10 +1363,202 @@
 
   // 기록을 열 때마다 (site.js → app.openBook → 여기). 데모: 누구나 / 서버: 관리자만
   let boundOnce = false;
+  // ── 쓰기 막대: 처음부터 직접 쓰기 (편집 화면 아래에 늘 붙어 있음) ──────────
+  // 넣는 곳 = '기준 줄' 바로 아래(없으면 고른 회차 맨 끝). 넣고 나면 새 줄이 기준이 되어 이어서 쓸 수 있음
+  const W = E.write = { after: null, session: null, who: 'narration' };
+  const SPECIAL = [['narration', '나레이션'], ['scene', '장면 제목'], ['system', '진행 표시']];
+  function writeSessions() { return store.book.sessions.filter((s) => s.no > 0 || store.entries(s.no, true).length); }
+  function lastOf(no) { const l = store.entries(no, true); return l.length ? l[l.length - 1].id : null; }
+  // 기준 줄이 지워졌거나 회차가 사라졌으면 맞춰 줌
+  function fixWritePlace() {
+    const ss = writeSessions();
+    if (W.after && !store.byId.get(W.after)) W.after = null;
+    if (W.after) W.session = store.byId.get(W.after).session;
+    if (W.session == null || !ss.some((s) => s.no === W.session)) {
+      const withLines = ss.filter((s) => store.entries(s.no, true).length);
+      W.session = (withLines[withLines.length - 1] || ss[ss.length - 1] || { no: 0 }).no;
+      W.after = lastOf(W.session);
+    }
+  }
+  function composerBuild() {
+    const box = $('composer');
+    if (box.dataset.built) return;
+    box.dataset.built = '1';
+    box.innerHTML = `
+      <div class="cmp-row">
+        <label class="sr-only" for="cmpSess">넣을 회차</label><select id="cmpSess" class="cmp-sel"></select>
+        <label class="sr-only" for="cmpWho">말하는 사람 · 종류</label><select id="cmpWho" class="cmp-sel"></select>
+        <span class="cmp-where" id="cmpWhere"></span>
+      </div>
+      <div class="cmp-row">
+        <label class="sr-only" for="cmpText">새 줄 내용</label>
+        <textarea id="cmpText" rows="2" maxlength="5000" placeholder="여기에 쓰고 Enter (줄바꿈은 Shift+Enter) · '이름: 대사'로 쓰면 그 사람의 말로"></textarea>
+        <button type="button" class="btn-sm primary" id="cmpAdd">넣기</button>
+      </div>`;
+    $('cmpSess').addEventListener('change', () => {
+      const v = $('cmpSess').value;
+      if (v === '+new') { newSession(); return; }
+      W.session = Number(v); W.after = lastOf(W.session);
+      composerRefresh(); $('cmpText').focus();
+    });
+    $('cmpWho').addEventListener('change', () => {
+      const v = $('cmpWho').value;
+      if (v === '+person') { newPerson(); return; }
+      if (v === '+dice') { composerRefresh(); writeDice(); return; }
+      W.who = v; $('cmpText').focus();
+    });
+    const ta = $('cmpText');
+    ta.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); writeLine(); return; }
+      // Alt+숫자: 인물 빨리 고르기 (Alt+0 = 나레이션)
+      if (ev.altKey && /^[0-9]$/.test(ev.key)) {
+        ev.preventDefault();
+        const opts = whoOptions().filter(([v]) => v === 'narration' || /^p/.test(v) || store.spk.get(v));
+        const pick = ev.key === '0' ? 'narration' : (opts.filter(([v]) => store.spk.get(v))[Number(ev.key) - 1] || [])[0];
+        if (pick) { W.who = pick; $('cmpWho').value = pick; }
+      }
+    });
+    ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 180) + 'px'; });
+    $('cmpAdd').addEventListener('click', writeLine);
+  }
+  function whoOptions() {
+    const sp = A.orderedSpeakers();
+    return [['narration', '나레이션']]
+      .concat(sp.map((s) => [s.id, `${s.name} · ${s.role === 'npc' && s.enemy ? '에너미' : ROLE_NAME[s.role] || ''}`]))
+      .concat([['scene', '장면 제목'], ['system', '진행 표시'], ['+dice', '주사위…'], ['+person', '+ 새 인물…']]);
+  }
+  function composerRefresh() {
+    const box = $('composer'); if (!box) return;
+    const on = E.active && !E.trash && !E.moving;
+    box.hidden = !on;
+    document.body.classList.toggle('has-composer', on);
+    if (!on) return;
+    composerBuild();
+    fixWritePlace();
+    const ss = $('cmpSess'); ss.replaceChildren();
+    writeSessions().forEach((s) => { const o = el('option', null, A.sessionLabel(s) + (s.date ? ' · ' + A.fmtDate(s.date) : '')); o.value = String(s.no); o.selected = s.no === W.session; ss.append(o); });
+    const plus = el('option', null, '+ 새 회차…'); plus.value = '+new'; ss.append(plus);
+    const wo = $('cmpWho'); wo.replaceChildren();
+    if (W.who !== 'narration' && !SPECIAL.some(([k]) => k === W.who) && !store.spk.get(W.who)) W.who = 'narration';
+    whoOptions().forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === W.who; wo.append(o); });
+    const where = $('cmpWhere'); where.replaceChildren();
+    const after = W.after && store.byId.get(W.after);
+    if (after) {
+      const s = A.spk(after.speaker);
+      const peek = (after.kind === 'dice' ? A.diceLabel(after.dice || {}) : after.text || '').slice(0, 24);
+      where.append(document.createTextNode(`넣는 곳: ${s ? s.name + ' ' : ''}'${peek}${(after.text || '').length > 24 ? '…' : ''}' 아래`));
+      const last = lastOf(W.session);
+      if (last !== W.after) {
+        const b = el('button', 'linkish', '회차 맨 끝으로'); b.type = 'button';
+        b.addEventListener('click', () => { W.after = last; composerRefresh(); });
+        where.append(' · ', b);
+      }
+      const go = el('button', 'linkish', '보기'); go.type = 'button';
+      go.addEventListener('click', () => { const r = document.getElementById(W.after); if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('is-target'); setTimeout(() => r.classList.remove('is-target'), 1500); } });
+      where.append(' · ', go);
+    } else where.textContent = `넣는 곳: ${A.sessionLabel(A.sessionOf(W.session))} 첫 줄`;
+  }
+  E.composerRefresh = composerRefresh;
+  // 줄 ⋯ 메뉴의 '여기 아래에 이어 쓰기'
+  function writeHere(e) {
+    W.after = e.id; W.session = e.session;
+    composerRefresh();
+    const ta = $('cmpText'); if (ta) ta.focus();
+  }
+
+  function writeLine() {
+    const ta = $('cmpText');
+    let text = ta.value.replace(/\s+$/, '').replace(/^\n+/, '');
+    if (!text.trim()) { ta.focus(); return; }
+    let who = W.who;
+    // '이름: 대사' → 그 사람의 말 (이름이 인물 목록에 있을 때만)
+    const m = text.match(/^([^:：\n]{1,40}?)\s*[:：]\s*([\s\S]+)$/);
+    if (m) {
+      const s = store.book.speakers.find((x) => x.name === m[1].trim());
+      if (s) { who = s.id; text = m[2]; } else if (m[1].trim() === '나레이션') { who = 'narration'; text = m[2]; }
+    }
+    fixWritePlace();
+    const id = store.newId();
+    const s = store.spk.get(who);
+    const kind = s ? (isChar(s) ? 'dialogue' : 'chat') : who === 'scene' ? 'scene' : who === 'system' ? 'system' : 'narration';
+    const ne = { id, seq: 0, session: W.session, kind, speaker: s ? s.id : null, text: text.trim(), ts: null, created: true };
+    store.commit('새 줄 쓰기', { entries: placeChanges([id], W.session, W.after, { [id]: ne }) });
+    W.after = id;
+    ta.value = ''; ta.style.height = '';
+    composerRefresh();
+    requestAnimationFrame(() => {
+      const r = document.getElementById(id);
+      if (r) { const rr = r.getBoundingClientRect(); const cb = $('composer').getBoundingClientRect(); if (rr.bottom > cb.top - 8 || rr.top < 80) r.scrollIntoView({ block: 'center' }); }
+      ta.focus();
+    });
+  }
+  function writeDice() {
+    fixWritePlace();
+    const id = store.newId();
+    const s = store.spk.get(W.who);
+    const ne = { id, seq: 0, session: W.session, kind: 'chat', speaker: s ? s.id : null, text: '', ts: null, created: true };
+    editDice(ne, { place: W.after, placeSession: W.session, isNew: true, done: () => { W.after = id; composerRefresh(); } });
+  }
+  function newSession() {
+    const ss = store.book.sessions;
+    const no = Math.max(0, ...ss.map((s) => s.no)) + 1;
+    ask({
+      title: '새 회차', note: '맨 뒤에 회차를 하나 더 만들고, 거기에 이어서 써요.',
+      fields: [{ id: 'ns-title', label: '회차 이름', value: `${no}회차`, max: 40 }, { id: 'ns-date', label: '날짜', type: 'date', value: new Date().toISOString().slice(0, 10) }],
+      ok: '만들기',
+      cancel: () => composerRefresh(),
+      run: ([t, d]) => {
+        const s = { no, title: t.trim() || `${no}회차`, date: d || null };
+        const dates = ss.map((x) => x.date).concat([s.date]).filter(Boolean).sort();
+        store.commit(`${s.title} 만들기`, { sessions: [s], book: { period: { start: dates[0] || null, end: dates[dates.length - 1] || null } } });
+        W.session = no; W.after = null;
+        composerRefresh(); $('cmpText').focus();
+      },
+    });
+  }
+  const NEW_COLORS = ['#3f8f7a', '#b4664a', '#6d6bc4', '#b08a2e', '#4f84b8', '#a85a8e', '#6f8f3a', '#8a6d5a'];
+  const NEW_PL = ['#7d8a96', '#8e8597', '#8a8f7c', '#977f7f', '#7c8f95', '#8f8a7a'];
+  function addPerson(name, pick) {
+    const role = pick === 'enemy' ? 'npc' : pick;
+    const maxP = Math.max(0, ...store.book.speakers.map((x) => Number(String(x.id).replace(/\D/g, '')) || 0));
+    const id = 'p' + (maxP + 1);
+    const chars = role === 'pc' || role === 'npc';
+    const n = store.book.speakers.filter((x) => (x.role === 'pc' || x.role === 'npc') === chars).length;
+    const s = { id, name: name.slice(0, 40), role, player: null, color: (chars ? NEW_COLORS : NEW_PL)[n % (chars ? NEW_COLORS : NEW_PL).length], charId: null, image: null };
+    if (pick === 'enemy') s.enemy = true;
+    store.commit(`인물 '${s.name}' 추가`, { speakers: [s] });
+    return s;
+  }
+  E.addPerson = addPerson;
+  function newPerson(then) {
+    ask({
+      title: '새 인물', note: '이름과 역할을 정해 주세요. 색·이미지·플레이어 연결은 인물 설정에서 바꿀 수 있어요.',
+      fields: [{ id: 'np-name', label: '이름', value: '', max: 40 }, { id: 'np-role', label: '역할', type: 'select', value: 'pc', options: ROLE_OPTS }],
+      ok: '추가',
+      cancel: () => composerRefresh(),
+      run: ([name, role]) => {
+        if (!name.trim()) { A.toast('이름을 적어 주세요'); composerRefresh(); return; }
+        if (store.book.speakers.some((x) => x.name === name.trim())) { A.toast('같은 이름의 인물이 이미 있어요'); composerRefresh(); return; }
+        const s = addPerson(name.trim(), role);
+        W.who = s.id;
+        composerRefresh();
+        if (then) then(s); else $('cmpText').focus();
+      },
+    });
+  }
+  E.newPerson = newPerson;
+
   E.ready = function () {
     const can = store.mode === 'demo' || store.isAdmin;
     if (can && !boundOnce) { bind(); boundOnce = true; }
     $('optEdit').hidden = !can;
+    // 방금 '새 기록 직접 쓰기'로 만든 기록이면 바로 편집 + 쓰기 막대로
+    let want = null; try { want = sessionStorage.getItem('sl:write'); } catch (e) { /* */ }
+    if (can && want && want === store.bookId) {
+      try { sessionStorage.removeItem('sl:write'); } catch (e) { /* */ }
+      if (!E.active) E.toggle();
+      requestAnimationFrame(() => { const ta = $('cmpText'); if (ta) ta.focus(); });
+    }
   };
 
   // 기록 지우기 (두 번 눌러 확인)

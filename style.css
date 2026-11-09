@@ -972,3 +972,31 @@ body.editing .chip-novel, body.editing #novelActs { display: none; }
 .cm-block select, .cm-people select { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.3rem 0.45rem; font-size: 0.84rem; max-width: 100%; }
 .cm-people { display: grid; gap: 0.35rem; }
 .cm-check { font-size: 0.82rem; color: var(--ink-soft); display: flex; gap: 0.4rem; align-items: center; }
+
+/* 편집: 쓰기 막대 (처음부터 직접 쓰기) */
+.composer {
+  position: sticky; bottom: 0; z-index: 12; margin-top: 1rem;
+  padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--surface) 96%, transparent); border: 1px solid var(--line); border-radius: 12px 12px 0 0;
+  box-shadow: 0 -10px 28px -18px rgba(0, 0, 0, 0.35); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: grid; gap: 0.45rem;
+}
+.cmp-row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+.cmp-row:last-child { flex-wrap: nowrap; align-items: flex-end; }
+.cmp-sel { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 0.3rem 0.45rem; font-size: 0.85rem; max-width: 14rem; }
+.cmp-where { font-size: 0.78rem; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+#cmpText {
+  flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 8px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.95rem; line-height: 1.5; max-height: 180px;
+}
+#cmpText:focus { outline: 2px solid var(--ring); outline-offset: 0; border-color: transparent; }
+@media (max-width: 720px) { .cmp-sel { max-width: 48%; } .composer { border-radius: 0; margin-inline: -16px; } }
+
+/* 새 기록 직접 쓰기 */
+.home-acts { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.nb-people { display: grid; gap: 0.4rem; margin-bottom: 0.5rem; }
+.nb-row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+.nb-row input, .nb-row select { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 0.35rem 0.5rem; font-size: 0.9rem; }
+.nb-row input { flex: 1 1 10rem; min-width: 0; }
+.nb-quick { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin-top: 0.5rem; }
+#nbCreate { margin-top: 1rem; }

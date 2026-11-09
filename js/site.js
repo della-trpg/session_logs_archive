@@ -123,6 +123,11 @@
     if (params.has('worlds')) return worldPicker();
     const bookId = params.get('b') || (site.api.demo && /^#(e\d+|s\d+|n|n-e\d+)$/.test(location.hash) ? 'demo' : null);
     if (bookId) return openBook(bookId, my);
+    if (params.has('new')) {
+      if (!site.profile.isAdmin) { site.nav(''); return; }
+      showPage('page'); window.scrollTo(0, 0);
+      return SL.newBookPage(page, { api: site.api, worlds: site.worlds, world: site.world, worldChars, nav: site.nav, selectWorld });
+    }
     if (params.has('import')) {
       if (!site.profile.isAdmin) { site.nav(''); return; }
       showPage('page'); window.scrollTo(0, 0);
@@ -300,13 +305,17 @@
     const t = el('div'); t.append(el('p', 'eyebrow', site.world.name), el('h1', 'home-title', '세션 기록'));
     head.append(t);
     if (site.profile.isAdmin) {
+      const acts = el('div', 'home-acts');
+      const write = el('button', 'btn', '새 기록 직접 쓰기'); write.type = 'button';
+      write.addEventListener('click', () => site.nav('?new'));
       const imp = el('button', 'btn primary', 'Roll20 로그 가져오기'); imp.type = 'button';
       imp.addEventListener('click', () => site.nav('?import'));
-      head.append(imp);
+      acts.append(write, imp);
+      head.append(acts);
     }
     wrap.append(head);
     if (!books.length) {
-      wrap.append(el('p', 'empty', site.profile.isAdmin ? '아직 기록이 없어요. Roll20 로그를 가져와 보세요.' : '아직 공개된 기록이 없어요.'));
+      wrap.append(el('p', 'empty', site.profile.isAdmin ? '아직 기록이 없어요. Roll20 로그를 가져오거나 직접 써 보세요.' : '아직 공개된 기록이 없어요.'));
       page.replaceChildren(wrap);
       return;
     }
